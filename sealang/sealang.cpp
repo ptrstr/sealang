@@ -71,17 +71,17 @@ namespace clang {
 CXString clang_Cursor_getOperatorString(CXCursor cursor)
 {
     if (cursor.kind == CXCursor_BinaryOperator) {
-        clang::BinaryOperator *op = (clang::BinaryOperator *) clang::getCursorExpr(cursor);
+        const clang::BinaryOperator *op = (const clang::BinaryOperator *) clang::getCursorExpr(cursor);
         return clang::cxstring::createDup(clang::BinaryOperator::getOpcodeStr(op->getOpcode()));
     }
 
     if (cursor.kind == CXCursor_CompoundAssignOperator) {
-        clang::CompoundAssignOperator *op = (clang::CompoundAssignOperator*) clang::getCursorExpr(cursor);
+        const clang::CompoundAssignOperator *op = (const clang::CompoundAssignOperator*) clang::getCursorExpr(cursor);
         return clang::cxstring::createDup(clang::BinaryOperator::getOpcodeStr(op->getOpcode()));
     }
 
     if (cursor.kind == CXCursor_UnaryOperator) {
-        clang::UnaryOperator *op = (clang::UnaryOperator*) clang::getCursorExpr(cursor);
+        const clang::UnaryOperator *op = (const clang::UnaryOperator*) clang::getCursorExpr(cursor);
         return clang::cxstring::createDup(clang::UnaryOperator::getOpcodeStr(op->getOpcode()));
     }
 
@@ -91,12 +91,12 @@ CXString clang_Cursor_getOperatorString(CXCursor cursor)
 clang::BinaryOperatorKind clang_Cursor_getBinaryOpcode(CXCursor cursor)
 {
     if (cursor.kind == CXCursor_BinaryOperator) {
-        clang::BinaryOperator *op = (clang::BinaryOperator *) clang::getCursorExpr(cursor);
+        const clang::BinaryOperator *op = (const clang::BinaryOperator *) clang::getCursorExpr(cursor);
         return static_cast<clang::BinaryOperatorKind>(op->getOpcode());
     }
 
     if (cursor.kind == CXCursor_CompoundAssignOperator) {
-        clang::CompoundAssignOperator *op = (clang::CompoundAssignOperator *) clang::getCursorExpr(cursor);
+        const clang::CompoundAssignOperator *op = (const clang::CompoundAssignOperator *) clang::getCursorExpr(cursor);
         return static_cast<clang::BinaryOperatorKind>(op->getOpcode());
     }
 
@@ -106,7 +106,7 @@ clang::BinaryOperatorKind clang_Cursor_getBinaryOpcode(CXCursor cursor)
 clang::UnaryOperatorKind clang_Cursor_getUnaryOpcode(CXCursor cursor)
 {
     if (cursor.kind == CXCursor_UnaryOperator) {
-        clang::UnaryOperator *op = (clang::UnaryOperator*) clang::getCursorExpr(cursor);
+        const clang::UnaryOperator *op = (const clang::UnaryOperator*) clang::getCursorExpr(cursor);
         return static_cast<clang::UnaryOperatorKind>(op->getOpcode());
     }
 
@@ -116,19 +116,19 @@ clang::UnaryOperatorKind clang_Cursor_getUnaryOpcode(CXCursor cursor)
 CXString clang_Cursor_getLiteralString(CXCursor cursor)
 {
     if (cursor.kind == CXCursor_IntegerLiteral) {
-        clang::IntegerLiteral *intLiteral = (clang::IntegerLiteral *) clang::getCursorExpr(cursor);
+        const clang::IntegerLiteral *intLiteral = (const clang::IntegerLiteral *) clang::getCursorExpr(cursor);
         return clang::cxstring::createDup(intLiteral->getValue().toString(10, true));
     }
 
     if (cursor.kind == CXCursor_FloatingLiteral) {
-        clang::FloatingLiteral *floatLiteral = (clang::FloatingLiteral *) clang::getCursorExpr(cursor);
+        const clang::FloatingLiteral *floatLiteral = (const clang::FloatingLiteral *) clang::getCursorExpr(cursor);
         llvm::SmallString<1024> str;
         floatLiteral->getValue().toString(str);
         return clang::cxstring::createDup(str.c_str());
     }
 
     if (cursor.kind == CXCursor_CharacterLiteral) {
-        clang::CharacterLiteral *charLiteral = (clang::CharacterLiteral *) clang::getCursorExpr(cursor);
+        const clang::CharacterLiteral *charLiteral = (const clang::CharacterLiteral *) clang::getCursorExpr(cursor);
         char c[2];
         c[0] = (char) charLiteral->getValue();
         c[1] = '\0';
@@ -136,12 +136,12 @@ CXString clang_Cursor_getLiteralString(CXCursor cursor)
     }
 
     if (cursor.kind == CXCursor_StringLiteral) {
-        clang::StringLiteral *stringLiteral = (clang::StringLiteral *) clang::getCursorExpr(cursor);
+        const clang::StringLiteral *stringLiteral = (const clang::StringLiteral *) clang::getCursorExpr(cursor);
         return clang::cxstring::createDup(stringLiteral->getBytes());
     }
 
     if (cursor.kind == CXCursor_CXXBoolLiteralExpr) {
-        clang::CXXBoolLiteralExpr *boolLiteral = (clang::CXXBoolLiteralExpr *) clang::getCursorExpr(cursor);
+        const clang::CXXBoolLiteralExpr *boolLiteral = (const clang::CXXBoolLiteralExpr *) clang::getCursorExpr(cursor);
         return clang::cxstring::createDup(boolLiteral->getValue() ? "true" : "false");
     }
 
