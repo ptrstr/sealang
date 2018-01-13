@@ -86,5 +86,6 @@ setup(
     # if nose.collector is used, many plugins will not be available
     # see: https://nose.readthedocs.io/en/latest/setuptools_integration.html
     test_suite='nose.collector',
-    tests_require=['nose']
+    tests_require=['nose'],
+    zip_safe=True,
 )
