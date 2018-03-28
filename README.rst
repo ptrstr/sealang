@@ -1,8 +1,8 @@
-Sealang
-=======
+Sealang (fork of pybee/sealang)
+===============================
 
-.. image:: https://travis-ci.org/pybee/sealang.svg?branch=master
-    :target: https://travis-ci.org/pybee/sealang
+.. image:: https://travis-ci.org/gtors/sealang.svg?branch=master
+    :target: https://travis-ci.org/gtors/sealang
 
 Sealang is an improved set of Python bindings for ``libclang``.
 
@@ -184,30 +184,13 @@ and SVN revision of the official clang repository.
 Any changes made upstream to ``libclang`` will be mirrored here; any changes
 made here will, where possible, be pushed upstream to ``libclang``.
 
-Community
----------
-
-Sealang is part of the `BeeWare suite`_. You can talk to the community through:
-
-* `@pybeeware on Twitter`_
-
-* The `BeeWare Users Mailing list`_, for questions about how to use the
-  BeeWare suite.
-
-* The `BeeWare Developers Mailing list`_, for discussing the development of
-  new features in the BeeWare suite, and ideas for new tools for the suite.
-
 Contributing
 ------------
 
 If you experience problems with Sealang, `log them on GitHub`_. If you
 want to contribute code, please `fork the code`_ and `submit a pull request`_.
 
-.. _BeeWare suite: http://pybee.org
 .. _Read The Docs: https://sealang.readthedocs.io
-.. _@pybeeware on Twitter: https://twitter.com/pybeeware
-.. _BeeWare Users Mailing list: https://groups.google.com/forum/#!forum/beeware-users
-.. _BeeWare Developers Mailing list: https://groups.google.com/forum/#!forum/beeware-developers
-.. _log them on Github: https://github.com/pybee/sealang/issues
-.. _fork the code: https://github.com/pybee/sealang
-.. _submit a pull request: https://github.com/pybee/sealang/pulls
+.. _log them on Github: https://github.com/gtors/sealang/issues
+.. _fork the code: https://github.com/gtors/sealang
+.. _submit a pull request: https://github.com/gtors/sealang/pulls
