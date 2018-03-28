@@ -3,15 +3,14 @@ dist: trusty
 language: python
 python:
  - "2.7"
- - "3.4"
- - "3.5"
+ - "3.6"
 env:
   global:
-     - LD_LIBRARY_PATH=/usr/lib/llvm-3.6/lib
-     - LLVM_HOME=/usr/lib/llvm-3.6
+     - LD_LIBRARY_PATH=/usr/lib/llvm-5.0/lib
+     - LLVM_HOME=/usr/lib/llvm-5.0
 before_install:
   - sudo apt-get update -y
-  - sudo apt-get install libclang-3.6 clang-3.6 -y
+  - sudo apt-get install libclang-5.0 clang-5.0 -y
 install:
   - pip install .
 script:
