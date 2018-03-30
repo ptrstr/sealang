@@ -7,7 +7,7 @@ import gc
 
 kInputsDir = os.path.join(os.path.dirname(__file__), 'INPUTS')
 
-
+# FIXME: BROKEN
 def test_create_fail():
     """Check we fail loading a database with an assertion"""
     path = os.path.dirname(__file__)
@@ -36,13 +36,20 @@ def test_lookup_succeed():
     cmds = cdb.getCompileCommands('/home/john.doe/MyProject/project.cpp')
     assert len(cmds) != 0
 
-
 def test_all_compilecommand():
     """Check we get all results from the db"""
     cdb = CompilationDatabase.fromDirectory(kInputsDir)
     cmds = cdb.getAllCompileCommands()
     assert len(cmds) == 3
     expected = [
+        {
+            'wd': b'/home/john.doe/MyProject',
+            'line': [
+                b'clang++',
+                b'-o', b'project.o',
+                b'-c', b'/home/john.doe/MyProject/project.cpp'
+            ]
+        },
         {
             'wd': b'/home/john.doe/MyProjectA',
             'line': [
@@ -58,14 +65,6 @@ def test_all_compilecommand():
                 b'-DFEATURE=1',
                 b'-o', b'project2-feature.o',
                 b'-c', b'/home/john.doe/MyProject/project2.cpp'
-            ]
-        },
-        {
-            'wd': b'/home/john.doe/MyProject',
-            'line': [
-                b'clang++',
-                b'-o', b'project.o',
-                b'-c', b'/home/john.doe/MyProject/project.cpp'
             ]
         }
     ]

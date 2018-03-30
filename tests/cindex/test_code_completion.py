@@ -13,6 +13,7 @@ def check_completion_results(cr, expected):
         assert c in completions, "Couldn't find '%s'" % c
 
 
+# FIXME: BROKEN
 def test_code_complete():
     files = [('fake.c', """
 /// Aaa.
@@ -42,6 +43,7 @@ void f() {
     check_completion_results(cr, expected)
 
 
+# FIXME: BROKEN
 def test_code_complete_availability():
     files = [('fake.cpp', """
 class P {

@@ -20,6 +20,7 @@ def test_get_all_kinds():
     assert CursorKind.TYPE_ALIAS_TEMPLATE_DECL in kinds
 
 
+# FIXME: BROKEN
 def test_kind_groups():
     """Check that every kind classifies to exactly one group."""
 

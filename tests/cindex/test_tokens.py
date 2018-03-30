@@ -9,7 +9,7 @@ from nose.tools import ok_
 
 from .util import get_tu
 
-
+# FIXME: BROKEN
 def test_token_to_cursor():
     """Ensure we can obtain a Cursor from a Token instance."""
     tu = get_tu('int i = 5;')
