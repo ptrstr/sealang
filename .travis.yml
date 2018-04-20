@@ -6,11 +6,20 @@ python:
  - "3.6"
 env:
   global:
-     - LD_LIBRARY_PATH=/usr/lib/llvm-5.0/lib
-     - LLVM_HOME=/usr/lib/llvm-5.0
-before_install:
-  - sudo apt-get update -y
-  - sudo apt-get install libclang-5.0 clang-5.0 -y
+    - LD_LIBRARY_PATH=/usr/lib/llvm-6.0/lib
+    - LLVM_HOME=/usr/lib/llvm-6.0
+    - CC=clang-6.0
+    - CXX=clang++-6.0
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+      - llvm-toolchain-trusty-6.0
+    packages:
+      - clang-6.0
+      - libclang-6.0
+      - llvm-6.0
+      - llvm-6.0-dev
 install:
   - pip install .
 script:

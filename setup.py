@@ -14,7 +14,9 @@ llvm_config = os.path.join(llvm_home, 'bin', 'llvm-config')
 
 if not os.path.isfile(llvm_config):
     print("Unable to set up build environment. Have you installed LLVM and set LLVM_HOME?")
-    dedent_print = lambda s: print(textwrap.dedent(s))
+
+    def dedent_print(s):
+        print(textwrap.dedent(s))
 
     if platform.system().lower() == 'darwin':
         dedent_print("""
@@ -26,8 +28,8 @@ if not os.path.isfile(llvm_config):
     elif platform.dist()[0].lower() == 'ubuntu':
         dedent_print("""
         Using apt-get:
-            sudo apt-get install libclang-5.0 clang-5.0 -y
-            export LLVM_HOME=/usr/lib/llvm-
+            sudo apt-get install libclang-6.0 clang-6.0 -y
+            export LLVM_HOME=/usr/lib/llvm-6.0
             export LD_LIBRARY_PATH=$LLVM_HOME/lib
         """)
     elif platform.dist()[0].lower() == 'arch':
