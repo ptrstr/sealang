@@ -9,14 +9,13 @@ from nose.tools import ok_
 
 from .util import get_tu
 
-# FIXME: BROKEN
 def test_token_to_cursor():
     """Ensure we can obtain a Cursor from a Token instance."""
     tu = get_tu('int i = 5;')
     r = tu.get_extent('t.c', (0, 9))
     tokens = list(tu.get_tokens(extent=r))
 
-    assert len(tokens) == 5
+    assert len(tokens) == 4
     assert tokens[1].spelling == 'i'
     assert tokens[1].kind == TokenKind.IDENTIFIER
 

@@ -64,6 +64,7 @@ call is efficient.
 # o implement additional SourceLocation, SourceRange, and File methods.
 
 from ctypes import *
+import itertools
 import collections
 import sys
 
@@ -1719,20 +1720,21 @@ class UnaryOperator(BaseEnumeration):
     def __repr__(self):
         return 'UnaryOperator.%s' % (self.name,)
 
+n = itertools.count(start=0, step=1)
 
-UnaryOperator.POSTINC = UnaryOperator(0)
-UnaryOperator.POSTDEC = UnaryOperator(1)
-UnaryOperator.PREINC = UnaryOperator(2)
-UnaryOperator.PREDEC = UnaryOperator(3)
-UnaryOperator.ADDROF = UnaryOperator(4)
-UnaryOperator.DEREF = UnaryOperator(5)
-UnaryOperator.PLUS = UnaryOperator(6)
-UnaryOperator.MINUS = UnaryOperator(7)
-UnaryOperator.NOT = UnaryOperator(8)
-UnaryOperator.LNOT = UnaryOperator(9)
-UnaryOperator.REAL = UnaryOperator(10)
-UnaryOperator.IMAG = UnaryOperator(11)
-UnaryOperator.EXTENSION = UnaryOperator(12)
+UnaryOperator.POSTINC = UnaryOperator(next(n))
+UnaryOperator.POSTDEC = UnaryOperator(next(n))
+UnaryOperator.PREINC = UnaryOperator(next(n))
+UnaryOperator.PREDEC = UnaryOperator(next(n))
+UnaryOperator.ADDROF = UnaryOperator(next(n))
+UnaryOperator.DEREF = UnaryOperator(next(n))
+UnaryOperator.PLUS = UnaryOperator(next(n))
+UnaryOperator.MINUS = UnaryOperator(next(n))
+UnaryOperator.NOT = UnaryOperator(next(n))
+UnaryOperator.LNOT = UnaryOperator(next(n))
+UnaryOperator.REAL = UnaryOperator(next(n))
+UnaryOperator.IMAG = UnaryOperator(next(n))
+UnaryOperator.EXTENSION = UnaryOperator(next(n))
 UnaryOperator.UNKNOWN = UnaryOperator(99999)
 
 
@@ -1759,39 +1761,41 @@ class BinaryOperator(BaseEnumeration):
     def __repr__(self):
         return 'BinaryOperator.%s' % (self.name,)
 
+n = itertools.count(start=0, step=1)
 
-BinaryOperator.PTRMEMD = BinaryOperator(0)
-BinaryOperator.PTRMEMI = BinaryOperator(1)
-BinaryOperator.MUL = BinaryOperator(2)
-BinaryOperator.DIV = BinaryOperator(3)
-BinaryOperator.REM = BinaryOperator(4)
-BinaryOperator.ADD = BinaryOperator(5)
-BinaryOperator.SUB = BinaryOperator(6)
-BinaryOperator.SHL = BinaryOperator(7)
-BinaryOperator.SHR = BinaryOperator(8)
-BinaryOperator.LT = BinaryOperator(9)
-BinaryOperator.GT = BinaryOperator(10)
-BinaryOperator.LE = BinaryOperator(11)
-BinaryOperator.GE = BinaryOperator(12)
-BinaryOperator.EQ = BinaryOperator(13)
-BinaryOperator.NE = BinaryOperator(14)
-BinaryOperator.AND = BinaryOperator(15)
-BinaryOperator.XOR = BinaryOperator(16)
-BinaryOperator.OR = BinaryOperator(17)
-BinaryOperator.LAND = BinaryOperator(18)
-BinaryOperator.LOR = BinaryOperator(19)
-BinaryOperator.ASSIGN = BinaryOperator(20)
-BinaryOperator.MULASSIGN = BinaryOperator(21)
-BinaryOperator.DIVASSIGN = BinaryOperator(22)
-BinaryOperator.REMASSIGN = BinaryOperator(23)
-BinaryOperator.ADDASSIGN = BinaryOperator(24)
-BinaryOperator.SUBASSIGN = BinaryOperator(25)
-BinaryOperator.SHLASSIGN = BinaryOperator(26)
-BinaryOperator.SHRASSIGN = BinaryOperator(27)
-BinaryOperator.ANDASSIGN = BinaryOperator(28)
-BinaryOperator.XORASSIGN = BinaryOperator(29)
-BinaryOperator.ORASSIGN = BinaryOperator(30)
-BinaryOperator.COMMA = BinaryOperator(31)
+BinaryOperator.PTRMEMD = BinaryOperator(next(n))
+BinaryOperator.PTRMEMI = BinaryOperator(next(n))
+BinaryOperator.MUL = BinaryOperator(next(n))
+BinaryOperator.DIV = BinaryOperator(next(n))
+BinaryOperator.REM = BinaryOperator(next(n))
+BinaryOperator.ADD = BinaryOperator(next(n))
+BinaryOperator.SUB = BinaryOperator(next(n))
+BinaryOperator.SHL = BinaryOperator(next(n))
+BinaryOperator.SHR = BinaryOperator(next(n))
+BinaryOperator.CMP = BinaryOperator(next(n))
+BinaryOperator.LT = BinaryOperator(next(n))
+BinaryOperator.GT = BinaryOperator(next(n))
+BinaryOperator.LE = BinaryOperator(next(n))
+BinaryOperator.GE = BinaryOperator(next(n))
+BinaryOperator.EQ = BinaryOperator(next(n))
+BinaryOperator.NE = BinaryOperator(next(n))
+BinaryOperator.AND = BinaryOperator(next(n))
+BinaryOperator.XOR = BinaryOperator(next(n))
+BinaryOperator.OR = BinaryOperator(next(n))
+BinaryOperator.LAND = BinaryOperator(next(n))
+BinaryOperator.LOR = BinaryOperator(next(n))
+BinaryOperator.ASSIGN = BinaryOperator(next(n))
+BinaryOperator.MULASSIGN = BinaryOperator(next(n))
+BinaryOperator.DIVASSIGN = BinaryOperator(next(n))
+BinaryOperator.REMASSIGN = BinaryOperator(next(n))
+BinaryOperator.ADDASSIGN = BinaryOperator(next(n))
+BinaryOperator.SUBASSIGN = BinaryOperator(next(n))
+BinaryOperator.SHLASSIGN = BinaryOperator(next(n))
+BinaryOperator.SHRASSIGN = BinaryOperator(next(n))
+BinaryOperator.ANDASSIGN = BinaryOperator(next(n))
+BinaryOperator.XORASSIGN = BinaryOperator(next(n))
+BinaryOperator.ORASSIGN = BinaryOperator(next(n))
+BinaryOperator.COMMA = BinaryOperator(next(n))
 BinaryOperator.UNKNOWN = BinaryOperator(99999)
 
 
@@ -1813,11 +1817,13 @@ class AccessSpecifier(BaseEnumeration):
         return 'AccessSpecifier.%s' % (self.name,)
 
 
-AccessSpecifier.INVALID = AccessSpecifier(0)
-AccessSpecifier.PUBLIC = AccessSpecifier(1)
-AccessSpecifier.PROTECTED = AccessSpecifier(2)
-AccessSpecifier.PRIVATE = AccessSpecifier(3)
-AccessSpecifier.NONE = AccessSpecifier(4)
+n = itertools.count(start=0, step=1)
+
+AccessSpecifier.INVALID = AccessSpecifier(next(n))
+AccessSpecifier.PUBLIC = AccessSpecifier(next(n))
+AccessSpecifier.PROTECTED = AccessSpecifier(next(n))
+AccessSpecifier.PRIVATE = AccessSpecifier(next(n))
+AccessSpecifier.NONE = AccessSpecifier(next(n))
 
 
 ### Type Kinds ###
@@ -2398,7 +2404,8 @@ class CodeCompletionResults(ClangObject):
                 return int(conf.lib.clang_codeCompleteGetNumDiagnostics(self.ccr))
 
             def __getitem__(self, key):
-                return conf.lib.clang_codeCompleteGetDiagnostic(self.ccr, key)
+                diag = conf.lib.clang_codeCompleteGetDiagnostic(self.ccr, key)
+                return Diagnostic(diag)
 
         return DiagnosticsItr(self)
 
@@ -2589,7 +2596,7 @@ class TranslationUnit(ClangObject):
         functions above. __init__ is only called internally.
         """
         assert isinstance(index, Index)
-
+        self.index = index
         ClangObject.__init__(self, ptr)
 
     def __del__(self):
@@ -3132,7 +3139,7 @@ functionList = [
     (
         "clang_codeCompleteGetDiagnostic",
         [CodeCompletionResults, c_int],
-        Diagnostic
+        c_object_p
     ),
     (
         "clang_codeCompleteGetNumDiagnostics",

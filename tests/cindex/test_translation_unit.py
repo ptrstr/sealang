@@ -42,7 +42,6 @@ def test_parse_arguments():
     assert spellings[-1] == 'hi'
 
 
-# FIXME: BROKEN
 def test_reparse_arguments():
     path = os.path.join(kInputsDir, 'parse_arguments.c')
     tu = TranslationUnit.from_source(path, ['-DDECL_ONE=hello', '-DDECL_TWO=hi'])

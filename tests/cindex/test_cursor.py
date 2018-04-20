@@ -289,7 +289,6 @@ def test_enum_values_cpp():
     assert ham.kind == CursorKind.ENUM_CONSTANT_DECL
     assert ham.enum_value == 0x10000000000
 
-# FIXME: BROKEN
 def test_unary_operator():
     tu = get_tu("""
         struct C {
@@ -344,7 +343,6 @@ def test_unary_operator():
         if not found:
             assert False, "Operator %s (%s) not found in test data" % (operator, spelling)
 
-# FIXME: BROKEN
 def test_binary_operator():
     tu = get_tu("""
         struct C {
@@ -447,7 +445,6 @@ def test_binary_operator():
         if not found:
             assert False, "Operator %s (%s) not found in test data" % (operator, spelling)
 
-# FIXME: BROKEN
 def test_literals():
     tu = get_tu("""
         struct C {
@@ -504,16 +501,12 @@ def test_result_type():
     assert t.kind == TypeKind.INT
 
 
-# FIXME: BROKEN
 def test_get_tokens():
     """Ensure we can map cursors back to tokens."""
     tu = get_tu('int foo(int i);')
     foo = get_cursor(tu, 'foo')
 
-    tokens = list(foo.get_tokens())
-    assert len(tokens) == 7
-    assert tokens[0].spelling == 'int'
-    assert tokens[1].spelling == 'foo'
+    assert [x.spelling for x in foo.get_tokens()] == ['int', 'foo', '(', 'int', 'i', ')']
 
 
 def test_get_arguments():
