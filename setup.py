@@ -48,7 +48,7 @@ if sys.version_info.major >= 3:
 
 setup(
     name='sealang',
-    version='5.0',
+    version='6.0',
     description='An extended set of Python bindings for libclang',
     long_description=open('README.rst').read(),
     url='http://github.com/pybee/sealang',
