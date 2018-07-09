@@ -78,7 +78,7 @@ setup(
             'sealang',
             sources=['sealang/sealang.cpp'],
             libraries=[
-                'clangAST', 'clangLex', 'clangBasic', 'LLVMCore', 'LLVMSupport', 'LLVMBinaryFormat',
+                'clangAST', 'LLVMCore', 'LLVMBinaryFormat',
                 'm', 'z', 'pthread', 'curses'
             ],
             extra_compile_args=llvm_cflags,
