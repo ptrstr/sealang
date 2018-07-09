@@ -17,62 +17,10 @@ Installation
 
 To compile Sealang, you'll need to:
 
-1. Install LLVM (with clang)
+1. Install LLVM 6.0 (with clang)
 2. Set some environment variables
-3. Install Sealang
+3. pip install git+https://github.com/gtors/sealang#egg=sealang-6.0
 
-The exact commands needed will vary between platforms.
-
-OS X
-~~~~
-
-Although OS X provides Clang, it doesn't provide all the development headers,
-so you'll need to . `Homebrew`_ is the easiest way to do this. Follow the
-installation instructions on the Homebrew homepage; once you've got Homebrew
-installed, you can run::
-
-    $ brew install llvm --with-clang --with-asan
-
-to get a working install of llvm with clang.
-
-.. _Homebrew: http://brew.sh
-
-Then, you'll need to set the following environment variables::
-
-    $ export LLVM_HOME=/usr/local/opt/llvm
-    $ export DYLD_LIBRARY_PATH=$LLVM_HOME/lib
-
-Lastly, you can install Sealang::
-
-    $ pip install sealang
-
-Ubuntu
-~~~~~~~~~~~~~~~~~~~~~
-
-To compile under Ubuntu 14.04 (Trusty), you'll need to get an updated version
-of LLVM::
-
-    $ sudo apt-get install libclang-3.6 clang-3.6 -y
-
-For Ubuntu 16.04 (Xenial), you may also need to install additional dev
-packages::
-
-    $ sudo apt-get install zlib1g-dev libncurses5-dev -y
-
-Then, you'll need to set the following environment variables::
-
-    $ export LLVM_HOME=/usr/lib/llvm-3.6
-    $ export LD_LIBRARY_PATH=$LLVM_HOME/lib
-
-Lastly, you can install Sealang::
-
-    $ pip install sealang
-
-Other platforms
-~~~~~~~~~~~~~~~
-
-The instructions for installing on other platforms should be analogous. If you
-develop build instructions for a platform, please `submit a pull request`_.
 
 Usage
 -----
