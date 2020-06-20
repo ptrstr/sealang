@@ -28,8 +28,8 @@ if not os.path.isfile(llvm_config):
     elif platform.dist()[0].lower() == 'ubuntu':
         dedent_print("""
         Using apt-get:
-            sudo apt-get install libclang-6.0 clang-6.0 -y
-            export LLVM_HOME=/usr/lib/llvm-6.0
+            sudo apt-get install libclang-10.0 clang-10.0 -y
+            export LLVM_HOME=/usr/lib/llvm-10.0
             export LD_LIBRARY_PATH=$LLVM_HOME/lib
         """)
     elif platform.dist()[0].lower() == 'arch':
@@ -39,19 +39,16 @@ if not os.path.isfile(llvm_config):
         """)
     sys.exit(1)
 
-llvm_cflags = subprocess.check_output([llvm_config, '--cxxflags']).split()
-llvm_ldflags = subprocess.check_output([llvm_config, '--ldflags']).split()
+llvm_cflags = subprocess.check_output([llvm_config, '--cxxflags']).decode('utf-8').split()
+llvm_ldflags = subprocess.check_output([llvm_config, '--ldflags']).decode('utf-8').split()
 
-if sys.version_info.major >= 3:
-    llvm_cflags = [p.decode('utf-8') for p in llvm_cflags]
-    llvm_ldflags = [p.decode('utf-8') for p in llvm_ldflags]
 
 setup(
     name='sealang',
-    version='6.0',
-    description='An extended set of Python bindings for libclang',
+    version='10.0',
+    description='An extended set of Python bindings for libclang (fork of pybee/sealang)',
     long_description=open('README.rst').read(),
-    url='http://github.com/pybee/sealang',
+    url='http://github.com/gtors/sealang',
     license='License :: OSI Approved :: University of Illinois/NCSA Open Source License',
     classifiers=[
         'Intended Audience :: Developers',
@@ -59,16 +56,12 @@ setup(
         'Programming Language :: Python',
         'Development Status :: 5 - Production/Stable',
         'Topic :: Software Development :: Compilers',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
     ],
     keywords=['llvm', 'clang', 'libclang'],
-    author='LLVM team and Russell Keith-Magee',
-    author_email='russell@keith-magee.com',
+    author='LLVM team, Russell Keith-Magee and Andrey Torsunov',
+    author_email='andrey.torsunov@gmail.com',
     packages=[
         'clang',
         'sealang'
@@ -77,10 +70,7 @@ setup(
         Extension(
             'sealang',
             sources=['sealang/sealang.cpp'],
-            libraries=[
-                'clangAST', 'clangLex', 'clangBasic', 'LLVMCore', 'LLVMSupport', 'LLVMBinaryFormat',
-                'm', 'z', 'pthread', 'curses'
-            ],
+            libraries=['clang-cpp'],
             extra_compile_args=llvm_cflags,
             extra_link_args=llvm_ldflags,
         ),

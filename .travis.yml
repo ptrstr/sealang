@@ -2,24 +2,24 @@ sudo: required
 dist: trusty
 language: python
 python:
- - "2.7"
- - "3.6"
+ - "3.7"
+ - "3.8"
 env:
   global:
-    - LD_LIBRARY_PATH=/usr/lib/llvm-6.0/lib
-    - LLVM_HOME=/usr/lib/llvm-6.0
-    - CC=clang-6.0
-    - CXX=clang++-6.0
+    - LD_LIBRARY_PATH=/usr/lib/llvm-10.0/lib
+    - LLVM_HOME=/usr/lib/llvm-10.0
+    - CC=clang-10.0
+    - CXX=clang++-10.0
 addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
-      - llvm-toolchain-trusty-6.0
+      - llvm-toolchain-trusty-10.0
     packages:
-      - clang-6.0
-      - libclang-6.0
-      - llvm-6.0
-      - llvm-6.0-dev
+      - clang-10.0
+      - libclang-10.0
+      - llvm-10.0
+      - llvm-10.0-dev
 install:
   - pip install .
 script:

@@ -1,13 +1,3 @@
-#===- cindex.py - Python Indexing Library Bindings -----------*- python -*--===#
-#
-#                     The LLVM Compiler Infrastructure
-#
-# This file is distributed under the University of Illinois Open Source
-# License. See LICENSE.TXT for details.
-#
-#===------------------------------------------------------------------------===#
-from __future__ import unicode_literals
-
 r"""
 Clang Indexing Library Bindings
 ===============================
@@ -46,6 +36,7 @@ Most object information is exposed using properties, when the underlying API
 call is efficient.
 """
 
+
 # TODO
 # ====
 #
@@ -63,11 +54,12 @@ call is efficient.
 #
 # o implement additional SourceLocation, SourceRange, and File methods.
 
-from ctypes import *
-import itertools
-import collections
-import sys
 
+import enum
+import collections
+
+from ctypes import *
+from pathlib import Path
 
 import clang.enumerations
 
@@ -79,14 +71,43 @@ c_object_p = POINTER(c_void_p)
 
 callbacks = {}
 
-# Python 3 type compatibility
-if sys.version_info.major <= 2:
-    BASESTRING = basestring
-else:
-    BASESTRING = str
+
+class c_interop_string(c_char_p):
+
+    def __init__(self, p=None):
+        if p is None:
+            p = ""
+        if isinstance(p, str):
+            p = p.encode("utf8")
+        super().__init__(p)
+
+    def __str__(self):
+        return self.value
+
+    @property
+    def value(self):
+        if super().value is None:
+            return None
+        return super().value.decode("utf8")
+
+    @classmethod
+    def from_param(cls, param):
+        if isinstance(param, str):
+            return cls(param)
+        if isinstance(param, bytes):
+            return cls(param)
+        if param is None:
+            # Support passing null to C functions expecting char arrays
+            return None
+        raise TypeError(f"Cannot convert '{type(param).__name__}' to '{cls.__name__}'")
+
+    @staticmethod
+    def to_python_string(x, *args):
+        return x.value
 
 
 ### Exception Classes ###
+
 
 class TranslationUnitLoadError(Exception):
     """Represents an error that occurred when loading a TranslationUnit.
@@ -96,6 +117,7 @@ class TranslationUnitLoadError(Exception):
 
     FIXME: Make libclang expose additional error information in this scenario.
     """
+
     pass
 
 
@@ -122,17 +144,20 @@ class TranslationUnitSaveError(Exception):
         assert isinstance(enumeration, int)
 
         if enumeration < 1 or enumeration > 3:
-            raise Exception("Encountered undefined TranslationUnit save error "
-                            "constant: %d. Please file a bug to have this "
-                            "value supported." % enumeration)
+            raise Exception(
+                "Encountered undefined TranslationUnit save error "
+                f"constant: {enumeration:d}. Please file a bug to have this "
+                "value supported."
+            )
 
         self.save_error = enumeration
-        Exception.__init__(self, 'Error %d: %s' % (enumeration, message))
+        Exception.__init__(self, f"Error {enumeration:d}: {message}")
 
 
 ### Structures and Utility Classes ###
 
-class CachedProperty(object):
+
+class CachedProperty:
     """Decorator that lazy-loads the value of a property.
 
     The first time the property is accessed, the original property function is
@@ -166,7 +191,7 @@ class _CXString(Structure):
         conf.lib.clang_disposeString(self)
 
     @staticmethod
-    def from_result(res, fn, args):
+    def from_result(res, fn=None, args=None):
         assert isinstance(res, _CXString)
         return conf.lib.clang_getCString(res)
 
@@ -175,6 +200,7 @@ class SourceLocation(Structure):
     """
     A SourceLocation represents a particular location within a source file.
     """
+
     _fields_ = [("ptr_data", c_void_p * 2), ("int_data", c_uint)]
     _data = None
 
@@ -240,8 +266,7 @@ class SourceLocation(Structure):
             filename = self.file.name
         else:
             filename = None
-        return "<SourceLocation file %r, line %r, column %r>" % (
-            filename, self.line, self.column)
+        return f"<SourceLocation file {filename!r}, line {self.line!r}, column {self.column!r}>"
 
 
 class SourceRange(Structure):
@@ -249,10 +274,12 @@ class SourceRange(Structure):
     A SourceRange describes a range of source locations within the source
     code.
     """
+
     _fields_ = [
         ("ptr_data", c_void_p * 2),
         ("begin_int_data", c_uint),
-        ("end_int_data", c_uint)]
+        ("end_int_data", c_uint),
+    ]
 
     # FIXME: Eliminate this and make normal constructor? Requires hiding ctypes
     # object.
@@ -288,8 +315,10 @@ class SourceRange(Structure):
             return False
         if other.file is None and self.start.file is None:
             pass
-        elif (self.start.file.name != other.file.name
-                or other.file.name != self.end.file.name):
+        elif (
+            self.start.file.name != other.file.name
+            or other.file.name != self.end.file.name
+        ):
             # same file name
             return False
         # same file, in between lines
@@ -306,10 +335,10 @@ class SourceRange(Structure):
         return False
 
     def __repr__(self):
-        return "<SourceRange start %r, end %r>" % (self.start, self.end)
+        return f"<SourceRange start {self.start!r}, end {self.end!r}>"
 
 
-class Diagnostic(object):
+class Diagnostic:
     """
     A Diagnostic is a single instance of a Clang diagnostic. It includes the
     diagnostic severity, the message, the location the diagnostic occurred, as
@@ -317,10 +346,18 @@ class Diagnostic(object):
     """
 
     Ignored = 0
-    Note    = 1
+    Note = 1
     Warning = 2
-    Error   = 3
-    Fatal   = 4
+    Error = 3
+    Fatal = 4
+
+    DisplaySourceLocation = 0x01
+    DisplayColumn = 0x02
+    DisplaySourceRanges = 0x04
+    DisplayOption = 0x08
+    DisplayCategoryId = 0x10
+    DisplayCategoryName = 0x20
+    _FormatOptionsMask = 0x3F
 
     def __init__(self, ptr):
         self.ptr = ptr
@@ -338,7 +375,7 @@ class Diagnostic(object):
 
     @property
     def spelling(self):
-        return conf.lib.clang_getDiagnosticSpelling(self).decode('utf-8')
+        return conf.lib.clang_getDiagnosticSpelling(self)
 
     @property
     def ranges(self):
@@ -350,7 +387,7 @@ class Diagnostic(object):
                 return int(conf.lib.clang_getDiagnosticNumRanges(self.diag))
 
             def __getitem__(self, key):
-                if (key >= len(self)):
+                if key >= len(self):
                     raise IndexError
                 return conf.lib.clang_getDiagnosticRange(self.diag, key)
 
@@ -378,6 +415,25 @@ class Diagnostic(object):
         return FixItIterator(self)
 
     @property
+    def children(self):
+        class ChildDiagnosticsIterator:
+            def __init__(self, diag):
+                self.diag_set = conf.lib.clang_getChildDiagnostics(diag)
+
+            def __len__(self):
+                return int(
+                    conf.lib.clang_getNumDiagnosticsInSet(self.diag_set)
+                )
+
+            def __getitem__(self, key):
+                diag = conf.lib.clang_getDiagnosticInSet(self.diag_set, key)
+                if not diag:
+                    raise IndexError
+                return Diagnostic(diag)
+
+        return ChildDiagnosticsIterator(self)
+
+    @property
     def category_number(self):
         """The category number for this diagnostic or 0 if unavailable."""
         return conf.lib.clang_getDiagnosticCategory(self)
@@ -385,31 +441,41 @@ class Diagnostic(object):
     @property
     def category_name(self):
         """The string name of the category for this diagnostic."""
-        return conf.lib.clang_getDiagnosticCategoryText(self).decode('utf-8')
+        return conf.lib.clang_getDiagnosticCategoryText(self)
 
     @property
     def option(self):
         """The command-line option that enables this diagnostic."""
-        return conf.lib.clang_getDiagnosticOption(self, None).decode('utf-8')
+        return conf.lib.clang_getDiagnosticOption(self, None)
 
     @property
     def disable_option(self):
         """The command-line option that disables this diagnostic."""
         disable = _CXString()
         conf.lib.clang_getDiagnosticOption(self, byref(disable))
+        return _CXString.from_result(disable)
 
-        return conf.lib.clang_getCString(disable).decode('utf-8')
+    def format(self, options=None):
+        """
+        Format this diagnostic for display. The options argument takes
+        Diagnostic.Display* flags, which can be combined using bitwise OR. If
+        the options argument is not provided, the default display options will
+        be used.
+        """
+        if options is None:
+            options = conf.lib.clang_defaultDiagnosticDisplayOptions()
+        if options & ~Diagnostic._FormatOptionsMask:
+            raise ValueError("Invalid format options")
+        return conf.lib.clang_formatDiagnostic(self, options)
 
     def __repr__(self):
-        return "<Diagnostic severity %r, location %r, spelling %r>" % (
-            self.severity, self.location, self.spelling
-        )
+        return f"<Diagnostic severity {self.severity!r}, location {self.location!r}, spelling {self.spelling!r}>"
 
     def from_param(self):
         return self.ptr
 
 
-class FixIt(object):
+class FixIt:
     """
     A FixIt represents a transformation to be applied to the source to
     "fix-it". The fix-it shouldbe applied by replacing the given source range
@@ -418,13 +484,13 @@ class FixIt(object):
 
     def __init__(self, range, value):
         self.range = range
-        self.value = value.decode('utf-8')
+        self.value = value
 
     def __repr__(self):
-        return "<FixIt range %r, value %r>" % (self.range, self.value)
+        return f"<FixIt range {self.range!r}, value {self.value!r}>"
 
 
-class TokenGroup(object):
+class TokenGroup:
     """Helper class to facilitate token management.
 
     Tokens are allocated from libclang in chunks. They must be disposed of as a
@@ -438,6 +504,7 @@ class TokenGroup(object):
 
     You should not instantiate this class outside of this module.
     """
+
     def __init__(self, tu, memory, count):
         self._tu = tu
         self._memory = memory
@@ -481,7 +548,7 @@ class TokenGroup(object):
             yield token
 
 
-class TokenKind(object):
+class TokenKind:
     """Describes a specific type of a Token."""
 
     _value_map = {}  # int -> TokenKind
@@ -492,7 +559,7 @@ class TokenKind(object):
         self.name = name
 
     def __repr__(self):
-        return 'TokenKind.%s' % (self.name,)
+        return f"TokenKind.{self.name}"
 
     @staticmethod
     def from_value(value):
@@ -500,7 +567,7 @@ class TokenKind(object):
         result = TokenKind._value_map.get(value, None)
 
         if result is None:
-            raise ValueError('Unknown TokenKind: %d' % value)
+            raise ValueError(f"Unknown TokenKind: {value:d}")
 
         return result
 
@@ -512,7 +579,7 @@ class TokenKind(object):
         package.
         """
         if value in TokenKind._value_map:
-            raise ValueError('TokenKind already registered: %d' % value)
+            raise ValueError(f"TokenKind already registered: {value:d}")
 
         kind = TokenKind(value, name)
         TokenKind._value_map[value] = kind
@@ -521,65 +588,691 @@ class TokenKind(object):
 
 ### Cursor Kinds ###
 
-class BaseEnumeration(object):
+
+class BaseEnum(enum.IntEnum):
     """
     Common base class for named enumerations held in sync with Index.h values.
-
-    Subclasses must define their own _kinds and _name_map members, as:
-    _kinds = []
-    _name_map = None
-    These values hold the per-subclass instances and value-to-name mappings,
-    respectively.
-
     """
-
-    def __init__(self, value):
-        if value >= len(self.__class__._kinds):
-            self.__class__._kinds += [None] * (value - len(self.__class__._kinds) + 1)
-        if self.__class__._kinds[value] is not None:
-            raise ValueError('{0} value {1} already loaded'.format(
-                str(self.__class__), value)
-            )
-        self.value = value
-        self.__class__._kinds[value] = self
-        self.__class__._name_map = None
 
     def from_param(self):
         return self.value
 
-    @property
-    def name(self):
-        """Get the enumeration name of this cursor kind."""
-        if self._name_map is None:
-            self._name_map = {}
-            for key, value in self.__class__.__dict__.items():
-                if isinstance(value, self.__class__):
-                    self._name_map[value] = key
-        return self._name_map[self]
-
     @classmethod
-    def from_id(cls, id):
-        if id >= len(cls._kinds) or cls._kinds[id] is None:
-            raise ValueError('Unknown template argument kind %d' % id)
-        return cls._kinds[id]
+    def from_id(cls, _id: int):
+        tag = next((tag for tag in cls if tag.value == _id), None)
+        if tag is None:
+            raise ValueError(f"Unknown template argument kind {_id:d}")
+        else:
+            return tag
 
     def __repr__(self):
-        return '%s.%s' % (self.__class__, self.name,)
+        return f"{self.__class__.__name__}.{self.name}"
 
 
-class CursorKind(BaseEnumeration):
+class CursorKind(BaseEnum):
     """
     A CursorKind describes the kind of entity that a cursor points to.
     """
 
-    # The required BaseEnumeration declarations.
-    _kinds = []
-    _name_map = None
+    ###
+    # Declaration Kinds
+
+    # A declaration whose specific kind is not exposed via this interface.
+    #
+    # Unexposed declarations have the same operations as any other kind of
+    # declaration; one can extract their location information, spelling, find their
+    # definitions, etc. However, the specific kind of the declaration is not
+    # reported.
+    UNEXPOSED_DECL = 1
+
+    # A C or C++ struct.
+    STRUCT_DECL = 2
+
+    # A C or C++ union.
+    UNION_DECL = 3
+
+    # A C++ class.
+    CLASS_DECL = 4
+
+    # An enumeration.
+    ENUM_DECL = 5
+
+    # A field (in C) or non-static data member (in C++) in a struct, union, or C++
+    # class.
+    FIELD_DECL = 6
+
+    # An enumerator constant.
+    ENUM_CONSTANT_DECL = 7
+
+    # A function.
+    FUNCTION_DECL = 8
+
+    # A variable.
+    VAR_DECL = 9
+
+    # A function or method parameter.
+    PARM_DECL = 10
+
+    # An Objective-C @interface.
+    OBJC_INTERFACE_DECL = 11
+
+    # An Objective-C @interface for a category.
+    OBJC_CATEGORY_DECL = 12
+
+    # An Objective-C @protocol declaration.
+    OBJC_PROTOCOL_DECL = 13
+
+    # An Objective-C @property declaration.
+    OBJC_PROPERTY_DECL = 14
+
+    # An Objective-C instance variable.
+    OBJC_IVAR_DECL = 15
+
+    # An Objective-C instance method.
+    OBJC_INSTANCE_METHOD_DECL = 16
+
+    # An Objective-C class method.
+    OBJC_CLASS_METHOD_DECL = 17
+
+    # An Objective-C @implementation.
+    OBJC_IMPLEMENTATION_DECL = 18
+
+    # An Objective-C @implementation for a category.
+    OBJC_CATEGORY_IMPL_DECL = 19
+
+    # A typedef.
+    TYPEDEF_DECL = 20
+
+    # A C++ class method.
+    CXX_METHOD = 21
+
+    # A C++ namespace.
+    NAMESPACE = 22
+
+    # A linkage specification, e.g. 'extern "C"'.
+    LINKAGE_SPEC = 23
+
+    # A C++ constructor.
+    CONSTRUCTOR = 24
+
+    # A C++ destructor.
+    DESTRUCTOR = 25
+
+    # A C++ conversion function.
+    CONVERSION_FUNCTION = 26
+
+    # A C++ template type parameter
+    TEMPLATE_TYPE_PARAMETER = 27
+
+    # A C++ non-type template parameter.
+    TEMPLATE_NON_TYPE_PARAMETER = 28
+
+    # A C++ template template parameter.
+    TEMPLATE_TEMPLATE_PARAMETER = 29
+
+    # A C++ function template.
+    FUNCTION_TEMPLATE = 30
+
+    # A C++ class template.
+    CLASS_TEMPLATE = 31
+
+    # A C++ class template partial specialization.
+    CLASS_TEMPLATE_PARTIAL_SPECIALIZATION = 32
+
+    # A C++ namespace alias declaration.
+    NAMESPACE_ALIAS = 33
+
+    # A C++ using directive
+    USING_DIRECTIVE = 34
+
+    # A C++ using declaration
+    USING_DECLARATION = 35
+
+    # A Type alias decl.
+    TYPE_ALIAS_DECL = 36
+
+    # A Objective-C synthesize decl
+    OBJC_SYNTHESIZE_DECL = 37
+
+    # A Objective-C dynamic decl
+    OBJC_DYNAMIC_DECL = 38
+
+    # A C++ access specifier decl.
+    CXX_ACCESS_SPEC_DECL = 39
+
+    ###
+    # Reference Kinds
+
+    OBJC_SUPER_CLASS_REF = 40
+    OBJC_PROTOCOL_REF = 41
+    OBJC_CLASS_REF = 42
+
+    # A reference to a type declaration.
+    #
+    # A type reference occurs anywhere where a type is named but not
+    # declared. For example, given:
+    #   typedef unsigned size_type;
+    #   size_type size;
+    #
+    # The typedef is a declaration of size_type (CXCursor_TypedefDecl),
+    # while the type of the variable "size" is referenced. The cursor
+    # referenced by the type of size is the typedef for size_type.
+    TYPE_REF = 43
+    CXX_BASE_SPECIFIER = 44
+
+    # A reference to a class template, function template, template
+    # template parameter, or class template partial specialization.
+    TEMPLATE_REF = 45
+
+    # A reference to a namespace or namepsace alias.
+    NAMESPACE_REF = 46
+
+    # A reference to a member of a struct, union, or class that occurs in
+    # some non-expression context, e.g., a designated initializer.
+    MEMBER_REF = 47
+
+    # A reference to a labeled statement.
+    LABEL_REF = 48
+
+    # A reference to a set of overloaded functions or function templates
+    # that has not yet been resolved to a specific function or function template.
+    OVERLOADED_DECL_REF = 49
+
+    # A reference to a variable that occurs in some non-expression
+    # context, e.g., a C++ lambda capture list.
+    VARIABLE_REF = 50
+
+    ###
+    # Invalid/Error Kinds
+
+    INVALID_FILE = 70
+    NO_DECL_FOUND = 71
+    NOT_IMPLEMENTED = 72
+    INVALID_CODE = 73
+
+    ###
+    # Expression Kinds
+
+    # An expression whose specific kind is not exposed via this interface.
+    #
+    # Unexposed expressions have the same operations as any other kind of
+    # expression; one can extract their location information, spelling, children,
+    # etc. However, the specific kind of the expression is not reported.
+    UNEXPOSED_EXPR = 100
+
+    # An expression that refers to some value declaration, such as a function,
+    # variable, or enumerator.
+    DECL_REF_EXPR = 101
+
+    # An expression that refers to a member of a struct, union, class, Objective-C
+    # class, etc.
+    MEMBER_REF_EXPR = 102
+
+    # An expression that calls a function.
+    CALL_EXPR = 103
+
+    # An expression that sends a message to an Objective-C object or class.
+    OBJC_MESSAGE_EXPR = 104
+
+    # An expression that represents a block literal.
+    BLOCK_EXPR = 105
+
+    # An integer literal.
+    INTEGER_LITERAL = 106
+
+    # A floating point number literal.
+    FLOATING_LITERAL = 107
+
+    # An imaginary number literal.
+    IMAGINARY_LITERAL = 108
+
+    # A string literal.
+    STRING_LITERAL = 109
+
+    # A character literal.
+    CHARACTER_LITERAL = 110
+
+    # A parenthesized expression, e.g. "(1)".
+    #
+    # This AST node is only formed if full location information is requested.
+    PAREN_EXPR = 111
+
+    # This represents the unary-expression's (except sizeof and
+    # alignof).
+    UNARY_OPERATOR = 112
+
+    # [C99 6.5.2.1] Array Subscripting.
+    ARRAY_SUBSCRIPT_EXPR = 113
+
+    # A builtin binary operation expression such as "x + y" or
+    # "x <= y".
+    BINARY_OPERATOR = 114
+
+    # Compound assignment such as "+=".
+    COMPOUND_ASSIGNMENT_OPERATOR = 115
+
+    # The ?: ternary operator.
+    CONDITIONAL_OPERATOR = 116
+
+    # An explicit cast in C (C99 6.5.4) or a C-style cast in C++
+    # (C++ [expr.cast]), which uses the syntax (Type)expr.
+    #
+    # For example: (int)f.
+    CSTYLE_CAST_EXPR = 117
+
+    # [C99 6.5.2.5]
+    COMPOUND_LITERAL_EXPR = 118
+
+    # Describes an C or C++ initializer list.
+    INIT_LIST_EXPR = 119
+
+    # The GNU address of label extension, representing &&label.
+    ADDR_LABEL_EXPR = 120
+
+    # This is the GNU Statement Expression extension: ({int X=4; X;})
+    StmtExpr = 121
+
+    # Represents a C11 generic selection.
+    GENERIC_SELECTION_EXPR = 122
+
+    # Implements the GNU __null extension, which is a name for a null
+    # pointer constant that has integral type (e.g., int or long) and is the same
+    # size and alignment as a pointer.
+    #
+    # The __null extension is typically only used by system headers, which define
+    # NULL as __null in C++ rather than using 0 (which is an integer that may not
+    # match the size of a pointer).
+    GNU_NULL_EXPR = 123
+
+    # C++'s static_cast<> expression.
+    CXX_STATIC_CAST_EXPR = 124
+
+    # C++'s dynamic_cast<> expression.
+    CXX_DYNAMIC_CAST_EXPR = 125
+
+    # C++'s reinterpret_cast<> expression.
+    CXX_REINTERPRET_CAST_EXPR = 126
+
+    # C++'s const_cast<> expression.
+    CXX_CONST_CAST_EXPR = 127
+
+    # Represents an explicit C++ type conversion that uses "functional"
+    # notion (C++ [expr.type.conv]).
+    #
+    # Example:
+    # \code
+    #   x = int(0.5);
+    # \endcode
+    CXX_FUNCTIONAL_CAST_EXPR = 128
+
+    # A C++ typeid expression (C++ [expr.typeid]).
+    CXX_TYPEID_EXPR = 129
+
+    # [C++ 2.13.5] C++ Boolean Literal.
+    CXX_BOOL_LITERAL_EXPR = 130
+
+    # [C++0x 2.14.7] C++ Pointer Literal.
+    CXX_NULL_PTR_LITERAL_EXPR = 131
+
+    # Represents the "this" expression in C++
+    CXX_THIS_EXPR = 132
+
+    # [C++ 15] C++ Throw Expression.
+    #
+    # This handles 'throw' and 'throw' assignment-expression. When
+    # assignment-expression isn't present, Op will be null.
+    CXX_THROW_EXPR = 133
+
+    # A new expression for memory allocation and constructor calls, e.g:
+    # "new CXXNewExpr(foo)".
+    CXX_NEW_EXPR = 134
+
+    # A delete expression for memory deallocation and destructor calls,
+    # e.g. "delete[] pArray".
+    CXX_DELETE_EXPR = 135
+
+    # Represents a unary expression.
+    CXX_UNARY_EXPR = 136
+
+    # ObjCStringLiteral, used for Objective-C string literals i.e. "foo".
+    OBJC_STRING_LITERAL = 137
+
+    # ObjCEncodeExpr, used for in Objective-C.
+    OBJC_ENCODE_EXPR = 138
+
+    # ObjCSelectorExpr used for in Objective-C.
+    OBJC_SELECTOR_EXPR = 139
+
+    # Objective-C's protocol expression.
+    OBJC_PROTOCOL_EXPR = 140
+
+    # An Objective-C "bridged" cast expression, which casts between
+    # Objective-C pointers and C pointers, transferring ownership in the process.
+    #
+    # \code
+    #   NSString *str = (__bridge_transfer NSString *)CFCreateString();
+    # \endcode
+    OBJC_BRIDGE_CAST_EXPR = 141
+
+    # Represents a C++0x pack expansion that produces a sequence of
+    # expressions.
+    #
+    # A pack expansion expression contains a pattern (which itself is an
+    # expression) followed by an ellipsis. For example:
+    PACK_EXPANSION_EXPR = 142
+
+    # Represents an expression that computes the length of a parameter
+    # pack.
+    SIZE_OF_PACK_EXPR = 143
+
+    # Represents a C++ lambda expression that produces a local function
+    # object.
+    #
+    #  \code
+    #  void abssort(float *x, unsigned N) {
+    #    std::sort(x, x + N,
+    #              [](float a, float b) {
+    #                return std::abs(a) < std::abs(b);
+    #              });
+    #  }
+    #  \endcode
+    LAMBDA_EXPR = 144
+
+    # Objective-c Boolean Literal.
+    OBJ_BOOL_LITERAL_EXPR = 145
+
+    # Represents the "self" expression in a ObjC method.
+    OBJ_SELF_EXPR = 146
+
+    # OpenMP 4.0 [2.4, Array Section].
+    OMP_ARRAY_SECTION_EXPR = 147
+
+    # Represents an @available(...) check.
+    OBJC_AVAILABILITY_CHECK_EXPR = 148
+
+    # A statement whose specific kind is not exposed via this interface.
+    #
+    # Unexposed statements have the same operations as any other kind of statement;
+    # one can extract their location information, spelling, children, etc. However,
+    # the specific kind of the statement is not reported.
+    UNEXPOSED_STMT = 200
+
+    # A labelled statement in a function.
+    LABEL_STMT = 201
+
+    # A compound statement
+    COMPOUND_STMT = 202
+
+    # A case statement.
+    CASE_STMT = 203
+
+    # A default statement.
+    DEFAULT_STMT = 204
+
+    # An if statement.
+    IF_STMT = 205
+
+    # A switch statement.
+    SWITCH_STMT = 206
+
+    # A while statement.
+    WHILE_STMT = 207
+
+    # A do statement.
+    DO_STMT = 208
+
+    # A for statement.
+    FOR_STMT = 209
+
+    # A goto statement.
+    GOTO_STMT = 210
+
+    # An indirect goto statement.
+    INDIRECT_GOTO_STMT = 211
+
+    # A continue statement.
+    CONTINUE_STMT = 212
+
+    # A break statement.
+    BREAK_STMT = 213
+
+    # A return statement.
+    RETURN_STMT = 214
+
+    # A GNU-style inline assembler statement.
+    ASM_STMT = 215
+
+    # Objective-C's overall @try-@catch-@finally statement.
+    OBJC_AT_TRY_STMT = 216
+
+    # Objective-C's @catch statement.
+    OBJC_AT_CATCH_STMT = 217
+
+    # Objective-C's @finally statement.
+    OBJC_AT_FINALLY_STMT = 218
+
+    # Objective-C's @throw statement.
+    OBJC_AT_THROW_STMT = 219
+
+    # Objective-C's @synchronized statement.
+    OBJC_AT_SYNCHRONIZED_STMT = 220
+
+    # Objective-C's autorealease pool statement.
+    OBJC_AUTORELEASE_POOL_STMT = 221
+
+    # Objective-C's for collection statement.
+    OBJC_FOR_COLLECTION_STMT = 222
+
+    # C++'s catch statement.
+    CXX_CATCH_STMT = 223
+
+    # C++'s try statement.
+    CXX_TRY_STMT = 224
+
+    # C++'s for (* : *) statement.
+    CXX_FOR_RANGE_STMT = 225
+
+    # Windows Structured Exception Handling's try statement.
+    SEH_TRY_STMT = 226
+
+    # Windows Structured Exception Handling's except statement.
+    SEH_EXCEPT_STMT = 227
+
+    # Windows Structured Exception Handling's finally statement.
+    SEH_FINALLY_STMT = 228
+
+    # A MS inline assembly statement extension.
+    MS_ASM_STMT = 229
+
+    # The null statement.
+    NULL_STMT = 230
+
+    # Adaptor class for mixing declarations with statements and expressions.
+    DECL_STMT = 231
+
+    # OpenMP parallel directive.
+    OMP_PARALLEL_DIRECTIVE = 232
+
+    # OpenMP SIMD directive.
+    OMP_SIMD_DIRECTIVE = 233
+
+    # OpenMP for directive.
+    OMP_FOR_DIRECTIVE = 234
+
+    # OpenMP sections directive.
+    OMP_SECTIONS_DIRECTIVE = 235
+
+    # OpenMP section directive.
+    OMP_SECTION_DIRECTIVE = 236
+
+    # OpenMP single directive.
+    OMP_SINGLE_DIRECTIVE = 237
+
+    # OpenMP parallel for directive.
+    OMP_PARALLEL_FOR_DIRECTIVE = 238
+
+    # OpenMP parallel sections directive.
+    OMP_PARALLEL_SECTIONS_DIRECTIVE = 239
+
+    # OpenMP task directive.
+    OMP_TASK_DIRECTIVE = 240
+
+    # OpenMP master directive.
+    OMP_MASTER_DIRECTIVE = 241
+
+    # OpenMP critical directive.
+    OMP_CRITICAL_DIRECTIVE = 242
+
+    # OpenMP taskyield directive.
+    OMP_TASKYIELD_DIRECTIVE = 243
+
+    # OpenMP barrier directive.
+    OMP_BARRIER_DIRECTIVE = 244
+
+    # OpenMP taskwait directive.
+    OMP_TASKWAIT_DIRECTIVE = 245
+
+    # OpenMP flush directive.
+    OMP_FLUSH_DIRECTIVE = 246
+
+    # Windows Structured Exception Handling's leave statement.
+    SEH_LEAVE_STMT = 247
+
+    # OpenMP ordered directive.
+    OMP_ORDERED_DIRECTIVE = 248
+
+    # OpenMP atomic directive.
+    OMP_ATOMIC_DIRECTIVE = 249
+
+    # OpenMP for SIMD directive.
+    OMP_FOR_SIMD_DIRECTIVE = 250
+
+    # OpenMP parallel for SIMD directive.
+    OMP_PARALLELFORSIMD_DIRECTIVE = 251
+
+    # OpenMP target directive.
+    OMP_TARGET_DIRECTIVE = 252
+
+    # OpenMP teams directive.
+    OMP_TEAMS_DIRECTIVE = 253
+
+    # OpenMP taskgroup directive.
+    OMP_TASKGROUP_DIRECTIVE = 254
+
+    # OpenMP cancellation point directive.
+    OMP_CANCELLATION_POINT_DIRECTIVE = 255
+
+    # OpenMP cancel directive.
+    OMP_CANCEL_DIRECTIVE = 256
+
+    # OpenMP target data directive.
+    OMP_TARGET_DATA_DIRECTIVE = 257
+
+    # OpenMP taskloop directive.
+    OMP_TASK_LOOP_DIRECTIVE = 258
+
+    # OpenMP taskloop simd directive.
+    OMP_TASK_LOOP_SIMD_DIRECTIVE = 259
+
+    # OpenMP distribute directive.
+    OMP_DISTRIBUTE_DIRECTIVE = 260
+
+    # OpenMP target enter data directive.
+    OMP_TARGET_ENTER_DATA_DIRECTIVE = 261
+
+    # OpenMP target exit data directive.
+    OMP_TARGET_EXIT_DATA_DIRECTIVE = 262
+
+    # OpenMP target parallel directive.
+    OMP_TARGET_PARALLEL_DIRECTIVE = 263
+
+    # OpenMP target parallel for directive.
+    OMP_TARGET_PARALLELFOR_DIRECTIVE = 264
+
+    # OpenMP target update directive.
+    OMP_TARGET_UPDATE_DIRECTIVE = 265
+
+    # OpenMP distribute parallel for directive.
+    OMP_DISTRIBUTE_PARALLELFOR_DIRECTIVE = 266
+
+    # OpenMP distribute parallel for simd directive.
+    OMP_DISTRIBUTE_PARALLEL_FOR_SIMD_DIRECTIVE = 267
+
+    # OpenMP distribute simd directive.
+    OMP_DISTRIBUTE_SIMD_DIRECTIVE = 268
+
+    # OpenMP target parallel for simd directive.
+    OMP_TARGET_PARALLEL_FOR_SIMD_DIRECTIVE = 269
+
+    # OpenMP target simd directive.
+    OMP_TARGET_SIMD_DIRECTIVE = 270
+
+    # OpenMP teams distribute directive.
+    OMP_TEAMS_DISTRIBUTE_DIRECTIVE = 271
+
+    ###
+    # Other Kinds
+
+    # Cursor that represents the translation unit itself.
+    #
+    # The translation unit cursor exists primarily to act as the root cursor for
+    # traversing the contents of a translation unit.
+    TRANSLATION_UNIT = 300
+
+    ###
+    # Attributes
+
+    # An attribute whoe specific kind is note exposed via this interface
+    UNEXPOSED_ATTR = 400
+    IB_ACTION_ATTR = 401
+    IB_OUTLET_ATTR = 402
+    IB_OUTLET_COLLECTION_ATTR = 403
+    CXX_FINAL_ATTR = 404
+    CXX_OVERRIDE_ATTR = 405
+    ANNOTATE_ATTR = 406
+    ASM_LABEL_ATTR = 407
+    PACKED_ATTR = 408
+    PURE_ATTR = 409
+    CONST_ATTR = 410
+    NODUPLICATE_ATTR = 411
+    CUDACONSTANT_ATTR = 412
+    CUDADEVICE_ATTR = 413
+    CUDAGLOBAL_ATTR = 414
+    CUDAHOST_ATTR = 415
+    CUDASHARED_ATTR = 416
+    VISIBILITY_ATTR = 417
+    DLLEXPORT_ATTR = 418
+    DLLIMPORT_ATTR = 419
+    CONVERGENT_ATTR = 438
+    WARN_UNUSED_ATTR = 439
+    WARN_UNUSED_RESULT_ATTR = 440
+    ALIGNED_ATTR = 441
+
+    ###
+    # Preprocessing
+    PREPROCESSING_DIRECTIVE = 500
+    MACRO_DEFINITION = 501
+    MACRO_INSTANTIATION = 502
+    INCLUSION_DIRECTIVE = 503
+
+    ###
+    # Extra declaration
+
+    # A module import declaration.
+    MODULE_IMPORT_DECL = 600
+    # A type alias template declaration
+    TYPE_ALIAS_TEMPLATE_DECL = 601
+    # A static_assert or _Static_assert node
+    STATIC_ASSERT = 602
+    # A friend declaration
+    FRIEND_DECL = 603
+    # A code completion overload candidate.
+    OVERLOAD_CANDIDATE = 700
 
     @staticmethod
     def get_all_kinds():
         """Return all CursorKind enumeration instances."""
-        return [k for k in CursorKind._kinds if k]
+        return [k for k in CursorKind if k is not None]
 
     def is_declaration(self):
         """Test if this is a declaration kind."""
@@ -618,565 +1311,55 @@ class CursorKind(BaseEnumeration):
         return conf.lib.clang_isUnexposed(self)
 
     def __repr__(self):
-        return 'CursorKind.%s' % (self.name,)
-
-###
-# Declaration Kinds
-
-# A declaration whose specific kind is not exposed via this interface.
-#
-# Unexposed declarations have the same operations as any other kind of
-# declaration; one can extract their location information, spelling, find their
-# definitions, etc. However, the specific kind of the declaration is not
-# reported.
-CursorKind.UNEXPOSED_DECL = CursorKind(1)
-
-# A C or C++ struct.
-CursorKind.STRUCT_DECL = CursorKind(2)
-
-# A C or C++ union.
-CursorKind.UNION_DECL = CursorKind(3)
-
-# A C++ class.
-CursorKind.CLASS_DECL = CursorKind(4)
-
-# An enumeration.
-CursorKind.ENUM_DECL = CursorKind(5)
-
-# A field (in C) or non-static data member (in C++) in a struct, union, or C++
-# class.
-CursorKind.FIELD_DECL = CursorKind(6)
-
-# An enumerator constant.
-CursorKind.ENUM_CONSTANT_DECL = CursorKind(7)
-
-# A function.
-CursorKind.FUNCTION_DECL = CursorKind(8)
-
-# A variable.
-CursorKind.VAR_DECL = CursorKind(9)
-
-# A function or method parameter.
-CursorKind.PARM_DECL = CursorKind(10)
-
-# An Objective-C @interface.
-CursorKind.OBJC_INTERFACE_DECL = CursorKind(11)
-
-# An Objective-C @interface for a category.
-CursorKind.OBJC_CATEGORY_DECL = CursorKind(12)
-
-# An Objective-C @protocol declaration.
-CursorKind.OBJC_PROTOCOL_DECL = CursorKind(13)
-
-# An Objective-C @property declaration.
-CursorKind.OBJC_PROPERTY_DECL = CursorKind(14)
-
-# An Objective-C instance variable.
-CursorKind.OBJC_IVAR_DECL = CursorKind(15)
-
-# An Objective-C instance method.
-CursorKind.OBJC_INSTANCE_METHOD_DECL = CursorKind(16)
-
-# An Objective-C class method.
-CursorKind.OBJC_CLASS_METHOD_DECL = CursorKind(17)
-
-# An Objective-C @implementation.
-CursorKind.OBJC_IMPLEMENTATION_DECL = CursorKind(18)
-
-# An Objective-C @implementation for a category.
-CursorKind.OBJC_CATEGORY_IMPL_DECL = CursorKind(19)
-
-# A typedef.
-CursorKind.TYPEDEF_DECL = CursorKind(20)
-
-# A C++ class method.
-CursorKind.CXX_METHOD = CursorKind(21)
-
-# A C++ namespace.
-CursorKind.NAMESPACE = CursorKind(22)
-
-# A linkage specification, e.g. 'extern "C"'.
-CursorKind.LINKAGE_SPEC = CursorKind(23)
-
-# A C++ constructor.
-CursorKind.CONSTRUCTOR = CursorKind(24)
-
-# A C++ destructor.
-CursorKind.DESTRUCTOR = CursorKind(25)
-
-# A C++ conversion function.
-CursorKind.CONVERSION_FUNCTION = CursorKind(26)
-
-# A C++ template type parameter
-CursorKind.TEMPLATE_TYPE_PARAMETER = CursorKind(27)
-
-# A C++ non-type template paramater.
-CursorKind.TEMPLATE_NON_TYPE_PARAMETER = CursorKind(28)
-
-# A C++ template template parameter.
-CursorKind.TEMPLATE_TEMPLATE_PARAMETER = CursorKind(29)
-
-# A C++ function template.
-CursorKind.FUNCTION_TEMPLATE = CursorKind(30)
-
-# A C++ class template.
-CursorKind.CLASS_TEMPLATE = CursorKind(31)
-
-# A C++ class template partial specialization.
-CursorKind.CLASS_TEMPLATE_PARTIAL_SPECIALIZATION = CursorKind(32)
-
-# A C++ namespace alias declaration.
-CursorKind.NAMESPACE_ALIAS = CursorKind(33)
-
-# A C++ using directive
-CursorKind.USING_DIRECTIVE = CursorKind(34)
-
-# A C++ using declaration
-CursorKind.USING_DECLARATION = CursorKind(35)
-
-# A Type alias decl.
-CursorKind.TYPE_ALIAS_DECL = CursorKind(36)
-
-# A Objective-C synthesize decl
-CursorKind.OBJC_SYNTHESIZE_DECL = CursorKind(37)
-
-# A Objective-C dynamic decl
-CursorKind.OBJC_DYNAMIC_DECL = CursorKind(38)
-
-# A C++ access specifier decl.
-CursorKind.CXX_ACCESS_SPEC_DECL = CursorKind(39)
-
-
-###
-# Reference Kinds
-
-CursorKind.OBJC_SUPER_CLASS_REF = CursorKind(40)
-CursorKind.OBJC_PROTOCOL_REF = CursorKind(41)
-CursorKind.OBJC_CLASS_REF = CursorKind(42)
-
-# A reference to a type declaration.
-#
-# A type reference occurs anywhere where a type is named but not
-# declared. For example, given:
-#   typedef unsigned size_type;
-#   size_type size;
-#
-# The typedef is a declaration of size_type (CXCursor_TypedefDecl),
-# while the type of the variable "size" is referenced. The cursor
-# referenced by the type of size is the typedef for size_type.
-CursorKind.TYPE_REF = CursorKind(43)
-CursorKind.CXX_BASE_SPECIFIER = CursorKind(44)
-
-# A reference to a class template, function template, template
-# template parameter, or class template partial specialization.
-CursorKind.TEMPLATE_REF = CursorKind(45)
-
-# A reference to a namespace or namepsace alias.
-CursorKind.NAMESPACE_REF = CursorKind(46)
-
-# A reference to a member of a struct, union, or class that occurs in
-# some non-expression context, e.g., a designated initializer.
-CursorKind.MEMBER_REF = CursorKind(47)
-
-# A reference to a labeled statement.
-CursorKind.LABEL_REF = CursorKind(48)
-
-# A reference to a set of overloaded functions or function templates
-# that has not yet been resolved to a specific function or function template.
-CursorKind.OVERLOADED_DECL_REF = CursorKind(49)
-
-# A reference to a variable that occurs in some non-expression
-# context, e.g., a C++ lambda capture list.
-CursorKind.VARIABLE_REF = CursorKind(50)
-
-###
-# Invalid/Error Kinds
-
-CursorKind.INVALID_FILE = CursorKind(70)
-CursorKind.NO_DECL_FOUND = CursorKind(71)
-CursorKind.NOT_IMPLEMENTED = CursorKind(72)
-CursorKind.INVALID_CODE = CursorKind(73)
-
-###
-# Expression Kinds
-
-# An expression whose specific kind is not exposed via this interface.
-#
-# Unexposed expressions have the same operations as any other kind of
-# expression; one can extract their location information, spelling, children,
-# etc. However, the specific kind of the expression is not reported.
-CursorKind.UNEXPOSED_EXPR = CursorKind(100)
-
-# An expression that refers to some value declaration, such as a function,
-# varible, or enumerator.
-CursorKind.DECL_REF_EXPR = CursorKind(101)
-
-# An expression that refers to a member of a struct, union, class, Objective-C
-# class, etc.
-CursorKind.MEMBER_REF_EXPR = CursorKind(102)
-
-# An expression that calls a function.
-CursorKind.CALL_EXPR = CursorKind(103)
-
-# An expression that sends a message to an Objective-C object or class.
-CursorKind.OBJC_MESSAGE_EXPR = CursorKind(104)
-
-# An expression that represents a block literal.
-CursorKind.BLOCK_EXPR = CursorKind(105)
-
-# An integer literal.
-CursorKind.INTEGER_LITERAL = CursorKind(106)
-
-# A floating point number literal.
-CursorKind.FLOATING_LITERAL = CursorKind(107)
-
-# An imaginary number literal.
-CursorKind.IMAGINARY_LITERAL = CursorKind(108)
-
-# A string literal.
-CursorKind.STRING_LITERAL = CursorKind(109)
-
-# A character literal.
-CursorKind.CHARACTER_LITERAL = CursorKind(110)
-
-# A parenthesized expression, e.g. "(1)".
-#
-# This AST node is only formed if full location information is requested.
-CursorKind.PAREN_EXPR = CursorKind(111)
-
-# This represents the unary-expression's (except sizeof and
-# alignof).
-CursorKind.UNARY_OPERATOR = CursorKind(112)
-
-# [C99 6.5.2.1] Array Subscripting.
-CursorKind.ARRAY_SUBSCRIPT_EXPR = CursorKind(113)
-
-# A builtin binary operation expression such as "x + y" or
-# "x <= y".
-CursorKind.BINARY_OPERATOR = CursorKind(114)
-
-# Compound assignment such as "+=".
-CursorKind.COMPOUND_ASSIGNMENT_OPERATOR = CursorKind(115)
-
-# The ?: ternary operator.
-CursorKind.CONDITIONAL_OPERATOR = CursorKind(116)
-
-# An explicit cast in C (C99 6.5.4) or a C-style cast in C++
-# (C++ [expr.cast]), which uses the syntax (Type)expr.
-#
-# For example: (int)f.
-CursorKind.CSTYLE_CAST_EXPR = CursorKind(117)
-
-# [C99 6.5.2.5]
-CursorKind.COMPOUND_LITERAL_EXPR = CursorKind(118)
-
-# Describes an C or C++ initializer list.
-CursorKind.INIT_LIST_EXPR = CursorKind(119)
-
-# The GNU address of label extension, representing &&label.
-CursorKind.ADDR_LABEL_EXPR = CursorKind(120)
-
-# This is the GNU Statement Expression extension: ({int X=4; X;})
-CursorKind.StmtExpr = CursorKind(121)
-
-# Represents a C11 generic selection.
-CursorKind.GENERIC_SELECTION_EXPR = CursorKind(122)
-
-# Implements the GNU __null extension, which is a name for a null
-# pointer constant that has integral type (e.g., int or long) and is the same
-# size and alignment as a pointer.
-#
-# The __null extension is typically only used by system headers, which define
-# NULL as __null in C++ rather than using 0 (which is an integer that may not
-# match the size of a pointer).
-CursorKind.GNU_NULL_EXPR = CursorKind(123)
-
-# C++'s static_cast<> expression.
-CursorKind.CXX_STATIC_CAST_EXPR = CursorKind(124)
-
-# C++'s dynamic_cast<> expression.
-CursorKind.CXX_DYNAMIC_CAST_EXPR = CursorKind(125)
-
-# C++'s reinterpret_cast<> expression.
-CursorKind.CXX_REINTERPRET_CAST_EXPR = CursorKind(126)
-
-# C++'s const_cast<> expression.
-CursorKind.CXX_CONST_CAST_EXPR = CursorKind(127)
-
-# Represents an explicit C++ type conversion that uses "functional"
-# notion (C++ [expr.type.conv]).
-#
-# Example:
-# \code
-#   x = int(0.5);
-# \endcode
-CursorKind.CXX_FUNCTIONAL_CAST_EXPR = CursorKind(128)
-
-# A C++ typeid expression (C++ [expr.typeid]).
-CursorKind.CXX_TYPEID_EXPR = CursorKind(129)
-
-# [C++ 2.13.5] C++ Boolean Literal.
-CursorKind.CXX_BOOL_LITERAL_EXPR = CursorKind(130)
-
-# [C++0x 2.14.7] C++ Pointer Literal.
-CursorKind.CXX_NULL_PTR_LITERAL_EXPR = CursorKind(131)
-
-# Represents the "this" expression in C++
-CursorKind.CXX_THIS_EXPR = CursorKind(132)
-
-# [C++ 15] C++ Throw Expression.
-#
-# This handles 'throw' and 'throw' assignment-expression. When
-# assignment-expression isn't present, Op will be null.
-CursorKind.CXX_THROW_EXPR = CursorKind(133)
-
-# A new expression for memory allocation and constructor calls, e.g:
-# "new CXXNewExpr(foo)".
-CursorKind.CXX_NEW_EXPR = CursorKind(134)
-
-# A delete expression for memory deallocation and destructor calls,
-# e.g. "delete[] pArray".
-CursorKind.CXX_DELETE_EXPR = CursorKind(135)
-
-# Represents a unary expression.
-CursorKind.CXX_UNARY_EXPR = CursorKind(136)
-
-# ObjCStringLiteral, used for Objective-C string literals i.e. "foo".
-CursorKind.OBJC_STRING_LITERAL = CursorKind(137)
-
-# ObjCEncodeExpr, used for in Objective-C.
-CursorKind.OBJC_ENCODE_EXPR = CursorKind(138)
-
-# ObjCSelectorExpr used for in Objective-C.
-CursorKind.OBJC_SELECTOR_EXPR = CursorKind(139)
-
-# Objective-C's protocol expression.
-CursorKind.OBJC_PROTOCOL_EXPR = CursorKind(140)
-
-# An Objective-C "bridged" cast expression, which casts between
-# Objective-C pointers and C pointers, transferring ownership in the process.
-#
-# \code
-#   NSString *str = (__bridge_transfer NSString *)CFCreateString();
-# \endcode
-CursorKind.OBJC_BRIDGE_CAST_EXPR = CursorKind(141)
-
-# Represents a C++0x pack expansion that produces a sequence of
-# expressions.
-#
-# A pack expansion expression contains a pattern (which itself is an
-# expression) followed by an ellipsis. For example:
-CursorKind.PACK_EXPANSION_EXPR = CursorKind(142)
-
-# Represents an expression that computes the length of a parameter
-# pack.
-CursorKind.SIZE_OF_PACK_EXPR = CursorKind(143)
-
-# Represents a C++ lambda expression that produces a local function
-# object.
-#
-#  \code
-#  void abssort(float *x, unsigned N) {
-#    std::sort(x, x + N,
-#              [](float a, float b) {
-#                return std::abs(a) < std::abs(b);
-#              });
-#  }
-#  \endcode
-CursorKind.LAMBDA_EXPR = CursorKind(144)
-
-# Objective-c Boolean Literal.
-CursorKind.OBJ_BOOL_LITERAL_EXPR = CursorKind(145)
-
-# Represents the "self" expression in a ObjC method.
-CursorKind.OBJ_SELF_EXPR = CursorKind(146)
-
-
-# A statement whose specific kind is not exposed via this interface.
-#
-# Unexposed statements have the same operations as any other kind of statement;
-# one can extract their location information, spelling, children, etc. However,
-# the specific kind of the statement is not reported.
-CursorKind.UNEXPOSED_STMT = CursorKind(200)
-
-# A labelled statement in a function.
-CursorKind.LABEL_STMT = CursorKind(201)
-
-# A compound statement
-CursorKind.COMPOUND_STMT = CursorKind(202)
-
-# A case statement.
-CursorKind.CASE_STMT = CursorKind(203)
-
-# A default statement.
-CursorKind.DEFAULT_STMT = CursorKind(204)
-
-# An if statement.
-CursorKind.IF_STMT = CursorKind(205)
-
-# A switch statement.
-CursorKind.SWITCH_STMT = CursorKind(206)
-
-# A while statement.
-CursorKind.WHILE_STMT = CursorKind(207)
-
-# A do statement.
-CursorKind.DO_STMT = CursorKind(208)
-
-# A for statement.
-CursorKind.FOR_STMT = CursorKind(209)
-
-# A goto statement.
-CursorKind.GOTO_STMT = CursorKind(210)
-
-# An indirect goto statement.
-CursorKind.INDIRECT_GOTO_STMT = CursorKind(211)
-
-# A continue statement.
-CursorKind.CONTINUE_STMT = CursorKind(212)
-
-# A break statement.
-CursorKind.BREAK_STMT = CursorKind(213)
-
-# A return statement.
-CursorKind.RETURN_STMT = CursorKind(214)
-
-# A GNU-style inline assembler statement.
-CursorKind.ASM_STMT = CursorKind(215)
-
-# Objective-C's overall @try-@catch-@finally statement.
-CursorKind.OBJC_AT_TRY_STMT = CursorKind(216)
-
-# Objective-C's @catch statement.
-CursorKind.OBJC_AT_CATCH_STMT = CursorKind(217)
-
-# Objective-C's @finally statement.
-CursorKind.OBJC_AT_FINALLY_STMT = CursorKind(218)
-
-# Objective-C's @throw statement.
-CursorKind.OBJC_AT_THROW_STMT = CursorKind(219)
-
-# Objective-C's @synchronized statement.
-CursorKind.OBJC_AT_SYNCHRONIZED_STMT = CursorKind(220)
-
-# Objective-C's autorealease pool statement.
-CursorKind.OBJC_AUTORELEASE_POOL_STMT = CursorKind(221)
-
-# Objective-C's for collection statement.
-CursorKind.OBJC_FOR_COLLECTION_STMT = CursorKind(222)
-
-# C++'s catch statement.
-CursorKind.CXX_CATCH_STMT = CursorKind(223)
-
-# C++'s try statement.
-CursorKind.CXX_TRY_STMT = CursorKind(224)
-
-# C++'s for (* : *) statement.
-CursorKind.CXX_FOR_RANGE_STMT = CursorKind(225)
-
-# Windows Structured Exception Handling's try statement.
-CursorKind.SEH_TRY_STMT = CursorKind(226)
-
-# Windows Structured Exception Handling's except statement.
-CursorKind.SEH_EXCEPT_STMT = CursorKind(227)
-
-# Windows Structured Exception Handling's finally statement.
-CursorKind.SEH_FINALLY_STMT = CursorKind(228)
-
-# A MS inline assembly statement extension.
-CursorKind.MS_ASM_STMT = CursorKind(229)
-
-# The null statement.
-CursorKind.NULL_STMT = CursorKind(230)
-
-# Adaptor class for mixing declarations with statements and expressions.
-CursorKind.DECL_STMT = CursorKind(231)
-
-###
-# Other Kinds
-
-# Cursor that represents the translation unit itself.
-#
-# The translation unit cursor exists primarily to act as the root cursor for
-# traversing the contents of a translation unit.
-CursorKind.TRANSLATION_UNIT = CursorKind(300)
-
-###
-# Attributes
-
-# An attribute whoe specific kind is note exposed via this interface
-CursorKind.UNEXPOSED_ATTR = CursorKind(400)
-
-CursorKind.IB_ACTION_ATTR = CursorKind(401)
-CursorKind.IB_OUTLET_ATTR = CursorKind(402)
-CursorKind.IB_OUTLET_COLLECTION_ATTR = CursorKind(403)
-
-CursorKind.CXX_FINAL_ATTR = CursorKind(404)
-CursorKind.CXX_OVERRIDE_ATTR = CursorKind(405)
-CursorKind.ANNOTATE_ATTR = CursorKind(406)
-CursorKind.ASM_LABEL_ATTR = CursorKind(407)
-CursorKind.PACKED_ATTR = CursorKind(408)
-CursorKind.PURE_ATTR = CursorKind(409)
-CursorKind.CONST_ATTR = CursorKind(410)
-CursorKind.NODUPLICATE_ATTR = CursorKind(411)
-CursorKind.CUDACONSTANT_ATTR = CursorKind(412)
-CursorKind.CUDADEVICE_ATTR = CursorKind(413)
-CursorKind.CUDAGLOBAL_ATTR = CursorKind(414)
-CursorKind.CUDAHOST_ATTR = CursorKind(415)
-CursorKind.CUDASHARED_ATTR = CursorKind(416)
-
-CursorKind.VISIBILITY_ATTR = CursorKind(417)
-
-CursorKind.DLLEXPORT_ATTR = CursorKind(418)
-CursorKind.DLLIMPORT_ATTR = CursorKind(419)
-
-###
-# Preprocessing
-CursorKind.PREPROCESSING_DIRECTIVE = CursorKind(500)
-CursorKind.MACRO_DEFINITION = CursorKind(501)
-CursorKind.MACRO_INSTANTIATION = CursorKind(502)
-CursorKind.INCLUSION_DIRECTIVE = CursorKind(503)
-
-###
-# Extra declaration
-
-# A module import declaration.
-CursorKind.MODULE_IMPORT_DECL = CursorKind(600)
-# A type alias template declaration
-CursorKind.TYPE_ALIAS_TEMPLATE_DECL = CursorKind(601)
+        return f"CursorKind.{self.name}"
 
 
 ### Template Argument Kinds ###
 
-class TemplateArgumentKind(BaseEnumeration):
+
+class TemplateArgumentKind(BaseEnum):
     """
     A TemplateArgumentKind describes the kind of entity that a template argument
     represents.
     """
 
-    # The required BaseEnumeration declarations.
-    _kinds = []
-    _name_map = None
+    NULL = 0
+    TYPE = 1
+    DECLARATION = 2
+    NULLPTR = 3
+    INTEGRAL = 4
 
-TemplateArgumentKind.NULL = TemplateArgumentKind(0)
-TemplateArgumentKind.TYPE = TemplateArgumentKind(1)
-TemplateArgumentKind.DECLARATION = TemplateArgumentKind(2)
-TemplateArgumentKind.NULLPTR = TemplateArgumentKind(3)
-TemplateArgumentKind.INTEGRAL = TemplateArgumentKind(4)
+
+### Exception Specification Kinds ###
+
+
+class ExceptionSpecificationKind(BaseEnum):
+    """
+    An ExceptionSpecificationKind describes the kind of exception specification
+    that a function has.
+    """
+
+    NONE = 0
+    DYNAMIC_NONE = enum.auto()
+    DYNAMIC = enum.auto()
+    MS_ANY = enum.auto()
+    BASIC_NOEXCEPT = enum.auto()
+    COMPUTED_NOEXCEPT = enum.auto()
+    UNEVALUATED = enum.auto()
+    UNINSTANTIATED = enum.auto()
+    UNPARSED = enum.auto()
 
 
 ### Cursors ###
+
 
 class Cursor(Structure):
     """
     The Cursor class represents a reference to an element within the AST. It
     acts as a kind of iterator.
     """
-    _fields_ = [
-        ("_kind_id", c_int),
-        ("xdata", c_int),
-        ("data", c_void_p * 3)
-    ]
+
+    _fields_ = [("_kind_id", c_int), ("xdata", c_int), ("data", c_void_p * 3)]
 
     @staticmethod
     def from_location(tu, location):
@@ -1206,6 +1389,32 @@ class Cursor(Structure):
         """
         return conf.lib.clang_CXXMethod_isConst(self)
 
+    def is_converting_constructor(self):
+        """Returns True if the cursor refers to a C++ converting constructor.
+        """
+        return conf.lib.clang_CXXConstructor_isConvertingConstructor(self)
+
+    def is_copy_constructor(self):
+        """Returns True if the cursor refers to a C++ copy constructor.
+        """
+        return conf.lib.clang_CXXConstructor_isCopyConstructor(self)
+
+    def is_default_constructor(self):
+        """Returns True if the cursor refers to a C++ default constructor.
+        """
+        return conf.lib.clang_CXXConstructor_isDefaultConstructor(self)
+
+    def is_move_constructor(self):
+        """Returns True if the cursor refers to a C++ move constructor.
+        """
+        return conf.lib.clang_CXXConstructor_isMoveConstructor(self)
+
+    def is_default_method(self):
+        """Returns True if the cursor refers to a C++ member function or member
+        function template that is declared '= default'.
+        """
+        return conf.lib.clang_CXXMethod_isDefaulted(self)
+
     def is_mutable_field(self):
         """Returns True if the cursor refers to a C++ field that is declared
         'mutable'.
@@ -1230,6 +1439,17 @@ class Cursor(Structure):
         """
         return conf.lib.clang_CXXMethod_isVirtual(self)
 
+    def is_abstract_record(self):
+        """Returns True if the cursor refers to a C++ record declaration
+        that has pure virtual member functions.
+        """
+        return conf.lib.clang_CXXRecord_isAbstract(self)
+
+    def is_scoped_enum(self):
+        """Returns True if the cursor refers to a scoped enum declaration.
+        """
+        return conf.lib.clang_EnumDecl_isScoped(self)
+
     def get_definition(self):
         """
         If the cursor is a reference to a declaration or a declaration of
@@ -1241,7 +1461,7 @@ class Cursor(Structure):
         return conf.lib.clang_getCursorDefinition(self)
 
     def get_usr(self):
-        """Return the Unified Symbol Resultion (USR) for the entity referenced
+        """Return the Unified Symbol Resolution (USR) for the entity referenced
         by the given cursor (or None).
 
         A Unified Symbol Resolution (USR) is a string that identifies a
@@ -1251,6 +1471,12 @@ class Cursor(Structure):
         another translation unit."""
         return conf.lib.clang_getCursorUSR(self)
 
+    def get_included_file(self):
+        """Returns the File that is included by the current inclusion cursor."""
+        assert self.kind == CursorKind.INCLUSION_DIRECTIVE
+
+        return conf.lib.clang_getIncludedFile(self)
+
     @property
     def kind(self):
         """Return the kind of this cursor."""
@@ -1259,9 +1485,8 @@ class Cursor(Structure):
     @property
     def spelling(self):
         """Return the spelling of the entity pointed at by the cursor."""
-        if not hasattr(self, '_spelling'):
-            self._spelling = conf.lib.clang_getCursorSpelling(self).decode('utf-8')
-
+        if not hasattr(self, "_spelling"):
+            self._spelling = conf.lib.clang_getCursorSpelling(self)
         return self._spelling
 
     @property
@@ -1273,17 +1498,19 @@ class Cursor(Structure):
         cursor, such as the parameters of a function or template or the
         arguments of a class template specialization.
         """
-        if not hasattr(self, '_displayname'):
-            self._displayname = conf.lib.clang_getCursorDisplayName(self).decode('utf-8')
-
+        if not hasattr(self, "_displayname"):
+            self._displayname = conf.lib.clang_getCursorDisplayName(
+                self
+            )
         return self._displayname
 
     @property
     def mangled_name(self):
         """Return the mangled name for the entity referenced by this cursor."""
-        if not hasattr(self, '_mangled_name'):
-            self._mangled_name = conf.lib.clang_Cursor_getMangling(self).decode('utf-8')
-
+        if not hasattr(self, "_mangled_name"):
+            self._mangled_name = conf.lib.clang_Cursor_getMangling(
+                self
+            )
         return self._mangled_name
 
     @property
@@ -1292,10 +1519,26 @@ class Cursor(Structure):
         Return the source location (the starting character) of the entity
         pointed at by the cursor.
         """
-        if not hasattr(self, '_loc'):
+        if not hasattr(self, "_loc"):
             self._loc = conf.lib.clang_getCursorLocation(self)
 
         return self._loc
+
+    @property
+    def linkage(self):
+        """Return the linkage of this cursor."""
+        if not hasattr(self, "_linkage"):
+            self._linkage = conf.lib.clang_getCursorLinkage(self)
+
+        return LinkageKind.from_id(self._linkage)
+
+    @property
+    def tls_kind(self):
+        """Return the thread-local storage (TLS) kind of this cursor."""
+        if not hasattr(self, "_tls_kind"):
+            self._tls_kind = conf.lib.clang_getCursorTLSKind(self)
+
+        return TLSKind.from_id(self._tls_kind)
 
     @property
     def extent(self):
@@ -1303,7 +1546,7 @@ class Cursor(Structure):
         Return the source range (the range of text) occupied by the entity
         pointed at by the cursor.
         """
-        if not hasattr(self, '_extent'):
+        if not hasattr(self, "_extent"):
             self._extent = conf.lib.clang_getCursorExtent(self)
 
         return self._extent
@@ -1314,27 +1557,39 @@ class Cursor(Structure):
         Retrieves the storage class (if any) of the entity pointed at by the
         cursor.
         """
-        if not hasattr(self, '_storage_class'):
+        if not hasattr(self, "_storage_class"):
             self._storage_class = conf.lib.clang_Cursor_getStorageClass(self)
 
         return StorageClass.from_id(self._storage_class)
+
+    @property
+    def availability(self):
+        """
+        Retrieves the availability of the entity pointed at by the cursor.
+        """
+        if not hasattr(self, "_availability"):
+            self._availability = conf.lib.clang_getCursorAvailability(self)
+
+        return AvailabilityKind.from_id(self._availability)
 
     @property
     def literal(self):
         """
         Retrieves the literal at this cursor
         """
-        if not hasattr(self, '_literal'):
-            self._literal = conf.sealang.clang_Cursor_getLiteralString(self).decode('utf-8')
-
+        if not hasattr(self, "_literal"):
+            self._literal = conf.sealang.clang_Cursor_getLiteralString(
+                self
+            )
         return self._literal
 
     @property
     def operator(self):
         """Retrieve the spelling of this TypeKind."""
-        if not hasattr(self, '_operator'):
-            self._operator = conf.sealang.clang_Cursor_getOperatorString(self).decode('utf-8')
-
+        if not hasattr(self, "_operator"):
+            self._operator = conf.sealang.clang_Cursor_getOperatorString(
+                self
+            )
         return self._operator
 
     @property
@@ -1342,9 +1597,8 @@ class Cursor(Structure):
         """
         Retrieves the opcode if this cursor points to a binary operator
         """
-        if not hasattr(self, '_unaryopcode'):
+        if not hasattr(self, "_unaryopcode"):
             self._unaryopcode = conf.sealang.clang_Cursor_getUnaryOpcode(self)
-
         return UnaryOperator.from_id(self._unaryopcode)
 
     @property
@@ -1352,10 +1606,8 @@ class Cursor(Structure):
         """
         Retrieves the opcode if this cursor points to a binary operator
         """
-
-        if not hasattr(self, '_binopcode'):
+        if not hasattr(self, "_binopcode"):
             self._binopcode = conf.sealang.clang_Cursor_getBinaryOpcode(self)
-
         return BinaryOperator.from_id(self._binopcode)
 
     @property
@@ -1364,7 +1616,7 @@ class Cursor(Structure):
         Retrieves the access specifier (if any) of the entity pointed at by the
         cursor.
         """
-        if not hasattr(self, '_access_specifier'):
+        if not hasattr(self, "_access_specifier"):
             self._access_specifier = conf.lib.clang_getCXXAccessSpecifier(self)
 
         return AccessSpecifier.from_id(self._access_specifier)
@@ -1374,7 +1626,7 @@ class Cursor(Structure):
         """
         Retrieve the Type (if any) of the entity pointed at by the cursor.
         """
-        if not hasattr(self, '_type'):
+        if not hasattr(self, "_type"):
             self._type = conf.lib.clang_getCursorType(self)
 
         return self._type
@@ -1388,7 +1640,7 @@ class Cursor(Structure):
         declarations for the same class, the canonical cursor for the forward
         declarations will be identical.
         """
-        if not hasattr(self, '_canonical'):
+        if not hasattr(self, "_canonical"):
             self._canonical = conf.lib.clang_getCanonicalCursor(self)
 
         return self._canonical
@@ -1396,10 +1648,24 @@ class Cursor(Structure):
     @property
     def result_type(self):
         """Retrieve the Type of the result for this Cursor."""
-        if not hasattr(self, '_result_type'):
+        if not hasattr(self, "_result_type"):
             self._result_type = conf.lib.clang_getResultType(self.type)
 
         return self._result_type
+
+    @property
+    def exception_specification_kind(self):
+        """
+        Retrieve the exception specification kind, which is one of the values
+        from the ExceptionSpecificationKind enumeration.
+        """
+        if not hasattr(self, "_exception_specification_kind"):
+            exc_kind = conf.lib.clang_getCursorExceptionSpecificationType(self)
+            self._exception_specification_kind = ExceptionSpecificationKind.from_id(
+                exc_kind
+            )
+
+        return self._exception_specification_kind
 
     @property
     def underlying_typedef_type(self):
@@ -1408,10 +1674,11 @@ class Cursor(Structure):
         Returns a Type for the typedef this cursor is a declaration for. If
         the current cursor is not a typedef, this raises.
         """
-        if not hasattr(self, '_underlying_type'):
+        if not hasattr(self, "_underlying_type"):
             assert self.kind.is_declaration()
-            self._underlying_type = \
-                conf.lib.clang_getTypedefDeclUnderlyingType(self)
+            self._underlying_type = conf.lib.clang_getTypedefDeclUnderlyingType(
+                self
+            )
 
         return self._underlying_type
 
@@ -1422,7 +1689,7 @@ class Cursor(Structure):
         Returns a Type corresponding to an integer. If the cursor is not for an
         enum, this raises.
         """
-        if not hasattr(self, '_enum_type'):
+        if not hasattr(self, "_enum_type"):
             assert self.kind == CursorKind.ENUM_DECL
             self._enum_type = conf.lib.clang_getEnumDeclIntegerType(self)
 
@@ -1431,41 +1698,47 @@ class Cursor(Structure):
     @property
     def enum_value(self):
         """Return the value of an enum constant."""
-        if not hasattr(self, '_enum_value'):
+        if not hasattr(self, "_enum_value"):
             assert self.kind == CursorKind.ENUM_CONSTANT_DECL
             # Figure out the underlying type of the enum to know if it
             # is a signed or unsigned quantity.
             underlying_type = self.type
             if underlying_type.kind == TypeKind.ENUM:
                 underlying_type = underlying_type.get_declaration().enum_type
-            if underlying_type.kind in (TypeKind.CHAR_U,
-                                        TypeKind.UCHAR,
-                                        TypeKind.CHAR16,
-                                        TypeKind.CHAR32,
-                                        TypeKind.USHORT,
-                                        TypeKind.UINT,
-                                        TypeKind.ULONG,
-                                        TypeKind.ULONGLONG,
-                                        TypeKind.UINT128):
-                self._enum_value = \
-                    conf.lib.clang_getEnumConstantDeclUnsignedValue(self)
+            if underlying_type.kind in (
+                TypeKind.CHAR_U,
+                TypeKind.UCHAR,
+                TypeKind.CHAR16,
+                TypeKind.CHAR32,
+                TypeKind.USHORT,
+                TypeKind.UINT,
+                TypeKind.ULONG,
+                TypeKind.ULONGLONG,
+                TypeKind.UINT128,
+            ):
+                self._enum_value = conf.lib.clang_getEnumConstantDeclUnsignedValue(
+                    self
+                )
             else:
-                self._enum_value = conf.lib.clang_getEnumConstantDeclValue(self)
+                self._enum_value = conf.lib.clang_getEnumConstantDeclValue(
+                    self
+                )
         return self._enum_value
 
     @property
     def objc_type_encoding(self):
         """Return the Objective-C type encoding as a str."""
-        if not hasattr(self, '_objc_type_encoding'):
-            self._objc_type_encoding = \
-                conf.lib.clang_getDeclObjCTypeEncoding(self).decode('utf-8')
+        if not hasattr(self, "_objc_type_encoding"):
+            self._objc_type_encoding = conf.lib.clang_getDeclObjCTypeEncoding(
+                self
+            )
 
         return self._objc_type_encoding
 
     @property
     def hash(self):
         """Returns a hash of the cursor as an int."""
-        if not hasattr(self, '_hash'):
+        if not hasattr(self, "_hash"):
             self._hash = conf.lib.clang_hashCursor(self)
 
         return self._hash
@@ -1473,15 +1746,17 @@ class Cursor(Structure):
     @property
     def semantic_parent(self):
         """Return the semantic parent for this cursor."""
-        if not hasattr(self, '_semantic_parent'):
-            self._semantic_parent = conf.lib.clang_getCursorSemanticParent(self)
+        if not hasattr(self, "_semantic_parent"):
+            self._semantic_parent = conf.lib.clang_getCursorSemanticParent(
+                self
+            )
 
         return self._semantic_parent
 
     @property
     def lexical_parent(self):
         """Return the lexical parent for this cursor."""
-        if not hasattr(self, '_lexical_parent'):
+        if not hasattr(self, "_lexical_parent"):
             self._lexical_parent = conf.lib.clang_getCursorLexicalParent(self)
 
         return self._lexical_parent
@@ -1499,7 +1774,7 @@ class Cursor(Structure):
         For a cursor that is a reference, returns a cursor
         representing the entity that it references.
         """
-        if not hasattr(self, '_referenced'):
+        if not hasattr(self, "_referenced"):
             self._referenced = conf.lib.clang_getCursorReferenced(self)
 
         return self._referenced
@@ -1539,7 +1814,9 @@ class Cursor(Structure):
 
     def get_template_argument_unsigned_value(self, num):
         """Returns the value of the indicated arg as an unsigned 64b integer."""
-        return conf.lib.clang_Cursor_getTemplateArgumentUnsignedValue(self, num)
+        return conf.lib.clang_Cursor_getTemplateArgumentUnsignedValue(
+            self, num
+        )
 
     def get_children(self):
         """Return an iterator for accessing the children of this cursor."""
@@ -1554,9 +1831,10 @@ class Cursor(Structure):
             child._tu = self._tu
             children.append(child)
             return 1  # continue
+
         children = []
         conf.lib.clang_visitChildren(
-            self, callbacks['cursor_visit'](visitor), children
+            self, callbacks["cursor_visit"](visitor), children
         )
         return iter(children)
 
@@ -1617,7 +1895,7 @@ class Cursor(Structure):
                 tu = arg
                 break
 
-            if hasattr(arg, 'translation_unit'):
+            if hasattr(arg, "translation_unit"):
                 tu = arg.translation_unit
                 break
 
@@ -1636,290 +1914,279 @@ class Cursor(Structure):
         return res
 
 
-class StorageClass(object):
+class StorageClass(BaseEnum):
     """
     Describes the storage class of a declaration
     """
 
-    # The unique kind objects, index by id.
-    _kinds = []
-    _name_map = None
-
-    def __init__(self, value):
-        if value >= len(StorageClass._kinds):
-            StorageClass._kinds += [None] * (value - len(StorageClass._kinds) + 1)
-        if StorageClass._kinds[value] is not None:
-            raise ValueError('StorageClass already loaded')
-        self.value = value
-        StorageClass._kinds[value] = self
-        StorageClass._name_map = None
-
-    def from_param(self):
-        return self.value
-
-    @property
-    def name(self):
-        """Get the enumeration name of this storage class."""
-        if self._name_map is None:
-            self._name_map = {}
-            for key, value in StorageClass.__dict__.items():
-                if isinstance(value, StorageClass):
-                    self._name_map[value] = key
-        return self._name_map[self]
-
-    @staticmethod
-    def from_id(id):
-        if id >= len(StorageClass._kinds) or not StorageClass._kinds[id]:
-            raise ValueError('Unknown storage class %d' % id)
-        return StorageClass._kinds[id]
-
-    def __repr__(self):
-        return 'StorageClass.%s' % (self.name,)
+    INVALID = 0
+    NONE = enum.auto()
+    EXTERN = enum.auto()
+    STATIC = enum.auto()
+    PRIVATEEXTERN = enum.auto()
+    OPENCLWORKGROUPLOCAL = enum.auto()
+    AUTO = enum.auto()
+    REGISTER = enum.auto()
 
 
-StorageClass.INVALID = StorageClass(0)
-StorageClass.NONE = StorageClass(1)
-StorageClass.EXTERN = StorageClass(2)
-StorageClass.STATIC = StorageClass(3)
-StorageClass.PRIVATEEXTERN = StorageClass(4)
-StorageClass.OPENCLWORKGROUPLOCAL = StorageClass(5)
-StorageClass.AUTO = StorageClass(6)
-StorageClass.REGISTER = StorageClass(7)
-
-
-class UnaryOperator(BaseEnumeration):
-    """
-    Describes the UnaryOperator of a declaration
-    """
-
-    # The unique kind objects, index by id.
-    _kinds = []
-    _name_map = None
+class UnaryOperator(BaseEnum):
+    POSTINC = 0
+    POSTDEC = enum.auto()
+    PREINC = enum.auto()
+    PREDEC = enum.auto()
+    ADDROF = enum.auto()
+    DEREF = enum.auto()
+    PLUS = enum.auto()
+    MINUS = enum.auto()
+    NOT = enum.auto()
+    LNOT = enum.auto()
+    REAL = enum.auto()
+    IMAG = enum.auto()
+    EXTENSION = enum.auto()
+    UNKNOWN = 99999
 
     def __bool__(self):
         """ Allows checks of the kind ```if cursor.binary_operator:```"""
         return self.value != 99999
 
-    # Python 2 compatibility
-    __nonzero__ = __bool__
+    def __repr__(self):
+        return f"UnaryOperator.{self.name}"
 
     @property
     def is_postfix(self):
-        return self.value in (
-            UnaryOperator.POSTINC.value,
-            UnaryOperator.POSTDEC.value,
-        )
+        return self.value in (self.POSTINC.value, self.POSTDEC.value,)
 
     @property
     def is_prefix(self):
-        return self.value not in (
-            UnaryOperator.POSTINC.value,
-            UnaryOperator.POSTDEC.value,
-        )
-
-    def __repr__(self):
-        return 'UnaryOperator.%s' % (self.name,)
-
-n = itertools.count(start=0, step=1)
-
-UnaryOperator.POSTINC = UnaryOperator(next(n))
-UnaryOperator.POSTDEC = UnaryOperator(next(n))
-UnaryOperator.PREINC = UnaryOperator(next(n))
-UnaryOperator.PREDEC = UnaryOperator(next(n))
-UnaryOperator.ADDROF = UnaryOperator(next(n))
-UnaryOperator.DEREF = UnaryOperator(next(n))
-UnaryOperator.PLUS = UnaryOperator(next(n))
-UnaryOperator.MINUS = UnaryOperator(next(n))
-UnaryOperator.NOT = UnaryOperator(next(n))
-UnaryOperator.LNOT = UnaryOperator(next(n))
-UnaryOperator.REAL = UnaryOperator(next(n))
-UnaryOperator.IMAG = UnaryOperator(next(n))
-UnaryOperator.EXTENSION = UnaryOperator(next(n))
-UnaryOperator.UNKNOWN = UnaryOperator(99999)
+        return not self.is_postfix
 
 
-class BinaryOperator(BaseEnumeration):
+class BinaryOperator(BaseEnum):
     """
     Describes the BinaryOperator of a declaration
     """
 
-    # The unique kind objects, index by id.
-    _kinds = []
-    _name_map = None
+    PTRMEMD = 0
+    PTRMEMI = enum.auto()
+    MUL = enum.auto()
+    DIV = enum.auto()
+    REM = enum.auto()
+    ADD = enum.auto()
+    SUB = enum.auto()
+    SHL = enum.auto()
+    SHR = enum.auto()
+    CMP = enum.auto()
+    LT = enum.auto()
+    GT = enum.auto()
+    LE = enum.auto()
+    GE = enum.auto()
+    EQ = enum.auto()
+    NE = enum.auto()
+    AND = enum.auto()
+    XOR = enum.auto()
+    OR = enum.auto()
+    LAND = enum.auto()
+    LOR = enum.auto()
+    ASSIGN = enum.auto()
+    MULASSIGN = enum.auto()
+    DIVASSIGN = enum.auto()
+    REMASSIGN = enum.auto()
+    ADDASSIGN = enum.auto()
+    SUBASSIGN = enum.auto()
+    SHLASSIGN = enum.auto()
+    SHRASSIGN = enum.auto()
+    ANDASSIGN = enum.auto()
+    XORASSIGN = enum.auto()
+    ORASSIGN = enum.auto()
+    COMMA = enum.auto()
+    UNKNOWN = 99999
 
     def __bool__(self):
         """ Allows checks of the kind ```if cursor.binary_operator:```"""
         return self.value != 99999
 
-    # Python 2 compatibility
-    __nonzero__ = __bool__
-
     @property
     def is_assignment(self):
-        return BinaryOperator.ASSIGN.value <= self.value < BinaryOperator.COMMA.value
+        return (
+            BinaryOperator.ASSIGN.value
+            <= self.value
+            < BinaryOperator.COMMA.value
+        )
 
     def __repr__(self):
-        return 'BinaryOperator.%s' % (self.name,)
+        return f"BinaryOperator.{self.name}"
 
-n = itertools.count(start=0, step=1)
 
-BinaryOperator.PTRMEMD = BinaryOperator(next(n))
-BinaryOperator.PTRMEMI = BinaryOperator(next(n))
-BinaryOperator.MUL = BinaryOperator(next(n))
-BinaryOperator.DIV = BinaryOperator(next(n))
-BinaryOperator.REM = BinaryOperator(next(n))
-BinaryOperator.ADD = BinaryOperator(next(n))
-BinaryOperator.SUB = BinaryOperator(next(n))
-BinaryOperator.SHL = BinaryOperator(next(n))
-BinaryOperator.SHR = BinaryOperator(next(n))
-BinaryOperator.CMP = BinaryOperator(next(n))
-BinaryOperator.LT = BinaryOperator(next(n))
-BinaryOperator.GT = BinaryOperator(next(n))
-BinaryOperator.LE = BinaryOperator(next(n))
-BinaryOperator.GE = BinaryOperator(next(n))
-BinaryOperator.EQ = BinaryOperator(next(n))
-BinaryOperator.NE = BinaryOperator(next(n))
-BinaryOperator.AND = BinaryOperator(next(n))
-BinaryOperator.XOR = BinaryOperator(next(n))
-BinaryOperator.OR = BinaryOperator(next(n))
-BinaryOperator.LAND = BinaryOperator(next(n))
-BinaryOperator.LOR = BinaryOperator(next(n))
-BinaryOperator.ASSIGN = BinaryOperator(next(n))
-BinaryOperator.MULASSIGN = BinaryOperator(next(n))
-BinaryOperator.DIVASSIGN = BinaryOperator(next(n))
-BinaryOperator.REMASSIGN = BinaryOperator(next(n))
-BinaryOperator.ADDASSIGN = BinaryOperator(next(n))
-BinaryOperator.SUBASSIGN = BinaryOperator(next(n))
-BinaryOperator.SHLASSIGN = BinaryOperator(next(n))
-BinaryOperator.SHRASSIGN = BinaryOperator(next(n))
-BinaryOperator.ANDASSIGN = BinaryOperator(next(n))
-BinaryOperator.XORASSIGN = BinaryOperator(next(n))
-BinaryOperator.ORASSIGN = BinaryOperator(next(n))
-BinaryOperator.COMMA = BinaryOperator(next(n))
-BinaryOperator.UNKNOWN = BinaryOperator(99999)
+### Availability Kinds ###
+
+
+class AvailabilityKind(BaseEnum):
+    """
+    Describes the availability of an entity.
+    """
+
+    AVAILABLE = 0
+    DEPRECATED = enum.auto()
+    NOT_AVAILABLE = enum.auto()
+    NOT_ACCESSIBLE = enum.auto()
 
 
 ### C++ access specifiers ###
 
-class AccessSpecifier(BaseEnumeration):
+
+class AccessSpecifier(BaseEnum):
     """
     Describes the access of a C++ class member
     """
 
-    # The unique kind objects, index by id.
-    _kinds = []
-    _name_map = None
-
-    def from_param(self):
-        return self.value
-
-    def __repr__(self):
-        return 'AccessSpecifier.%s' % (self.name,)
-
-
-n = itertools.count(start=0, step=1)
-
-AccessSpecifier.INVALID = AccessSpecifier(next(n))
-AccessSpecifier.PUBLIC = AccessSpecifier(next(n))
-AccessSpecifier.PROTECTED = AccessSpecifier(next(n))
-AccessSpecifier.PRIVATE = AccessSpecifier(next(n))
-AccessSpecifier.NONE = AccessSpecifier(next(n))
+    INVALID = 0
+    PUBLIC = enum.auto()
+    PROTECTED = enum.auto()
+    PRIVATE = enum.auto()
+    NONE = enum.auto()
 
 
 ### Type Kinds ###
 
-class TypeKind(BaseEnumeration):
+
+class TypeKind(BaseEnum):
     """
     Describes the kind of type.
     """
 
-    # The unique kind objects, indexed by id.
-    _kinds = []
-    _name_map = None
+    INVALID = 0
+    UNEXPOSED = 1
+    VOID = 2
+    BOOL = 3
+    CHAR_U = 4
+    UCHAR = 5
+    CHAR16 = 6
+    CHAR32 = 7
+    USHORT = 8
+    UINT = 9
+    ULONG = 10
+    ULONGLONG = 11
+    UINT128 = 12
+    CHAR_S = 13
+    SCHAR = 14
+    WCHAR = 15
+    SHORT = 16
+    INT = 17
+    LONG = 18
+    LONGLONG = 19
+    INT128 = 20
+    FLOAT = 21
+    DOUBLE = 22
+    LONGDOUBLE = 23
+    NULLPTR = 24
+    OVERLOAD = 25
+    DEPENDENT = 26
+    OBJCID = 27
+    OBJCCLASS = 28
+    OBJCSEL = 29
+    FLOAT128 = 30
+    HALF = 31
+    COMPLEX = 100
+    POINTER = 101
+    BLOCKPOINTER = 102
+    LVALUEREFERENCE = 103
+    RVALUEREFERENCE = 104
+    RECORD = 105
+    ENUM = 106
+    TYPEDEF = 107
+    OBJCINTERFACE = 108
+    OBJCOBJECTPOINTER = 109
+    FUNCTIONNOPROTO = 110
+    FUNCTIONPROTO = 111
+    CONSTANTARRAY = 112
+    VECTOR = 113
+    INCOMPLETEARRAY = 114
+    VARIABLEARRAY = 115
+    DEPENDENTSIZEDARRAY = 116
+    MEMBERPOINTER = 117
+    AUTO = 118
+    ELABORATED = 119
+    PIPE = 120
+    OCLIMAGE1DRO = 121
+    OCLIMAGE1DARRAYRO = 122
+    OCLIMAGE1DBUFFERRO = 123
+    OCLIMAGE2DRO = 124
+    OCLIMAGE2DARRAYRO = 125
+    OCLIMAGE2DDEPTHRO = 126
+    OCLIMAGE2DARRAYDEPTHRO = 127
+    OCLIMAGE2DMSAARO = 128
+    OCLIMAGE2DARRAYMSAARO = 129
+    OCLIMAGE2DMSAADEPTHRO = 130
+    OCLIMAGE2DARRAYMSAADEPTHRO = 131
+    OCLIMAGE3DRO = 132
+    OCLIMAGE1DWO = 133
+    OCLIMAGE1DARRAYWO = 134
+    OCLIMAGE1DBUFFERWO = 135
+    OCLIMAGE2DWO = 136
+    OCLIMAGE2DARRAYWO = 137
+    OCLIMAGE2DDEPTHWO = 138
+    OCLIMAGE2DARRAYDEPTHWO = 139
+    OCLIMAGE2DMSAAWO = 140
+    OCLIMAGE2DARRAYMSAAWO = 141
+    OCLIMAGE2DMSAADEPTHWO = 142
+    OCLIMAGE2DARRAYMSAADEPTHWO = 143
+    OCLIMAGE3DWO = 144
+    OCLIMAGE1DRW = 145
+    OCLIMAGE1DARRAYRW = 146
+    OCLIMAGE1DBUFFERRW = 147
+    OCLIMAGE2DRW = 148
+    OCLIMAGE2DARRAYRW = 149
+    OCLIMAGE2DDEPTHRW = 150
+    OCLIMAGE2DARRAYDEPTHRW = 151
+    OCLIMAGE2DMSAARW = 152
+    OCLIMAGE2DARRAYMSAARW = 153
+    OCLIMAGE2DMSAADEPTHRW = 154
+    OCLIMAGE2DARRAYMSAADEPTHRW = 155
+    OCLIMAGE3DRW = 156
+    OCLSAMPLER = 157
+    OCLEVENT = 158
+    OCLQUEUE = 159
+    OCLRESERVEID = 160
+    EXTVECTOR = 176
+    ATOMIC = 177
 
     @property
     def spelling(self):
         """Retrieve the spelling of this TypeKind."""
-        return conf.lib.clang_getTypeKindSpelling(self.value).decode('utf-8')
-
-    def __repr__(self):
-        return 'TypeKind.%s' % (self.name,)
+        return conf.lib.clang_getTypeKindSpelling(self.value)
 
 
-TypeKind.INVALID = TypeKind(0)
-TypeKind.UNEXPOSED = TypeKind(1)
-TypeKind.VOID = TypeKind(2)
-TypeKind.BOOL = TypeKind(3)
-TypeKind.CHAR_U = TypeKind(4)
-TypeKind.UCHAR = TypeKind(5)
-TypeKind.CHAR16 = TypeKind(6)
-TypeKind.CHAR32 = TypeKind(7)
-TypeKind.USHORT = TypeKind(8)
-TypeKind.UINT = TypeKind(9)
-TypeKind.ULONG = TypeKind(10)
-TypeKind.ULONGLONG = TypeKind(11)
-TypeKind.UINT128 = TypeKind(12)
-TypeKind.CHAR_S = TypeKind(13)
-TypeKind.SCHAR = TypeKind(14)
-TypeKind.WCHAR = TypeKind(15)
-TypeKind.SHORT = TypeKind(16)
-TypeKind.INT = TypeKind(17)
-TypeKind.LONG = TypeKind(18)
-TypeKind.LONGLONG = TypeKind(19)
-TypeKind.INT128 = TypeKind(20)
-TypeKind.FLOAT = TypeKind(21)
-TypeKind.DOUBLE = TypeKind(22)
-TypeKind.LONGDOUBLE = TypeKind(23)
-TypeKind.NULLPTR = TypeKind(24)
-TypeKind.OVERLOAD = TypeKind(25)
-TypeKind.DEPENDENT = TypeKind(26)
-TypeKind.OBJCID = TypeKind(27)
-TypeKind.OBJCCLASS = TypeKind(28)
-TypeKind.OBJCSEL = TypeKind(29)
-TypeKind.COMPLEX = TypeKind(100)
-TypeKind.POINTER = TypeKind(101)
-TypeKind.BLOCKPOINTER = TypeKind(102)
-TypeKind.LVALUEREFERENCE = TypeKind(103)
-TypeKind.RVALUEREFERENCE = TypeKind(104)
-TypeKind.RECORD = TypeKind(105)
-TypeKind.ENUM = TypeKind(106)
-TypeKind.TYPEDEF = TypeKind(107)
-TypeKind.OBJCINTERFACE = TypeKind(108)
-TypeKind.OBJCOBJECTPOINTER = TypeKind(109)
-TypeKind.FUNCTIONNOPROTO = TypeKind(110)
-TypeKind.FUNCTIONPROTO = TypeKind(111)
-TypeKind.CONSTANTARRAY = TypeKind(112)
-TypeKind.VECTOR = TypeKind(113)
-TypeKind.INCOMPLETEARRAY = TypeKind(114)
-TypeKind.VARIABLEARRAY = TypeKind(115)
-TypeKind.DEPENDENTSIZEDARRAY = TypeKind(116)
-TypeKind.MEMBERPOINTER = TypeKind(117)
-TypeKind.AUTO = TypeKind(118)
-
-
-class RefQualifierKind(BaseEnumeration):
+class RefQualifierKind(BaseEnum):
     """Describes a specific ref-qualifier of a type."""
 
-    # The unique kind objects, indexed by id.
-    _kinds = []
-    _name_map = None
-
-    def from_param(self):
-        return self.value
-
-    def __repr__(self):
-        return 'RefQualifierKind.%s' % (self.name,)
+    NONE = 0
+    LVALUE = enum.auto()
+    RVALUE = enum.auto()
 
 
-RefQualifierKind.NONE = RefQualifierKind(0)
-RefQualifierKind.LVALUE = RefQualifierKind(1)
-RefQualifierKind.RVALUE = RefQualifierKind(2)
+class LinkageKind(BaseEnum):
+    """Describes the kind of linkage of a cursor."""
+
+    INVALID = 0
+    NO_LINKAGE = enum.auto()
+    INTERNAL = enum.auto()
+    UNIQUE_EXTERNAL = enum.auto()
+    EXTERNAL = enum.auto()
+
+
+class TLSKind(BaseEnum):
+    """Describes the kind of thread-local storage (TLS) of a cursor."""
+
+    NONE = 0
+    DYNAMIC = enum.auto()
+    STATIC = enum.auto()
 
 
 class Type(Structure):
     """
     The type of an element in the abstract syntax tree.
     """
+
     _fields_ = [("_kind_id", c_int), ("data", c_void_p * 2)]
 
     @property
@@ -1933,6 +2200,7 @@ class Type(Structure):
         The returned object is iterable and indexable. Each item in the
         container is a Type instance.
         """
+
         class ArgumentsIterator(collections.Sequence):
             def __init__(self, parent):
                 self.parent = parent
@@ -1954,7 +2222,8 @@ class Type(Structure):
 
                 if key >= len(self):
                     raise IndexError(
-                        "Index greater than container length: %d > %d" % (key, len(self))
+                        "Index greater than container length: %d > %d"
+                        % (key, len(self))
                     )
 
                 result = conf.lib.clang_getArgType(self.parent, key)
@@ -1975,7 +2244,7 @@ class Type(Structure):
         """
         result = conf.lib.clang_getElementType(self)
         if result.kind == TypeKind.INVALID:
-            raise Exception('Element type not available on this type.')
+            raise Exception("Element type not available on this type.")
 
         return result
 
@@ -1989,7 +2258,7 @@ class Type(Structure):
         """
         result = conf.lib.clang_getNumElements(self)
         if result < 0:
-            raise Exception('Type does not have elements.')
+            raise Exception("Type does not have elements.")
 
         return result
 
@@ -2006,7 +2275,7 @@ class Type(Structure):
 
         tu = None
         for arg in args:
-            if hasattr(arg, 'translation_unit'):
+            if hasattr(arg, "translation_unit"):
                 tu = arg.translation_unit
                 break
 
@@ -2014,6 +2283,12 @@ class Type(Structure):
         res._tu = tu
 
         return res
+
+    def get_num_template_arguments(self):
+        return conf.lib.clang_Type_getNumTemplateArguments(self)
+
+    def get_template_argument_type(self, num):
+        return conf.lib.clang_Type_getTemplateArgumentAsType(self, num)
 
     def get_canonical(self):
         """
@@ -2057,6 +2332,12 @@ class Type(Structure):
 
         return conf.lib.clang_isFunctionTypeVariadic(self)
 
+    def get_address_space(self):
+        return conf.lib.clang_getAddressSpace(self)
+
+    def get_typedef_name(self):
+        return conf.lib.clang_getTypedefName(self)
+
     def is_pod(self):
         """Determine whether this Type represents plain old data (POD)."""
         return conf.lib.clang_isPODType(self)
@@ -2097,6 +2378,12 @@ class Type(Structure):
         """
         return conf.lib.clang_Type_getClassType(self)
 
+    def get_named_type(self):
+        """
+        Retrieve the type named by the qualified-id.
+        """
+        return conf.lib.clang_Type_getNamedType(self)
+
     def get_align(self):
         """
         Retrieve the alignment of the record.
@@ -2113,16 +2400,15 @@ class Type(Structure):
         """
         Retrieve the offset of a field in the record.
         """
-        return conf.lib.clang_Type_getOffsetOf(
-            self, c_char_p(fieldname.encode('utf-8'))
-        )
+        return conf.lib.clang_Type_getOffsetOf(self, fieldname)
 
     def get_ref_qualifier(self):
         """
         Retrieve the ref-qualifier of the type.
         """
         return RefQualifierKind.from_id(
-                conf.lib.clang_Type_getCXXRefQualifier(self))
+            conf.lib.clang_Type_getCXXRefQualifier(self)
+        )
 
     def get_fields(self):
         """Return an iterator for accessing the fields of this type."""
@@ -2134,16 +2420,26 @@ class Type(Structure):
             field._tu = self._tu
             fields.append(field)
             return 1  # continue
+
         fields = []
         conf.lib.clang_Type_visitFields(
-            self, callbacks['fields_visit'](visitor), fields
+            self, callbacks["fields_visit"](visitor), fields
         )
         return iter(fields)
+
+    def get_exception_specification_kind(self):
+        """
+        Return the kind of the exception specification; a value from
+        the ExceptionSpecificationKind enumeration.
+        """
+        return ExceptionSpecificationKind.from_id(
+            conf.lib.clang.getExceptionSpecificationType(self)
+        )
 
     @property
     def spelling(self):
         """Retrieve the spelling of this Type."""
-        return conf.lib.clang_getTypeSpelling(self).decode('utf-8')
+        return conf.lib.clang_getTypeSpelling(self)
 
     def __eq__(self, other):
         if type(other) != type(self):
@@ -2161,11 +2457,13 @@ class Type(Structure):
 # wrappers attached to some underlying object, which is exposed via CIndex as
 # a void*.
 
-class ClangObject(object):
+
+class ClangObject:
     """
     A helper for Clang objects. This class helps act as an intermediary for
     the ctypes library and the Clang CIndex library.
     """
+
     def __init__(self, obj):
         assert isinstance(obj, c_object_p) and obj
         self.obj = self._as_parameter_ = obj
@@ -2176,37 +2474,39 @@ class ClangObject(object):
 
 class _CXUnsavedFile(Structure):
     """Helper for passing unsaved file arguments."""
+
     _fields_ = [
         ("name", c_char_p),
         ("contents", c_char_p),
-        ('length', c_ulong)
+        ("length", c_ulong),
     ]
+
 
 # Functions calls through the python interface are rather slow. Fortunately,
 # for most symboles, we do not need to perform a function call. Their spelling
 # never changes and is consequently provided by this spelling cache.
 SpellingCache = {
-            # 0:         CompletionChunk.Kind("Optional"),
-            # 1:         CompletionChunk.Kind("TypedText"),
-            # 2:         CompletionChunk.Kind("Text"),
-            # 3:         CompletionChunk.Kind("Placeholder"),
-            # 4:         CompletionChunk.Kind("Informative"),
-            # 5 :        CompletionChunk.Kind("CurrentParameter"),
-            6: '(',    # CompletionChunk.Kind("LeftParen"),
-            7: ')',    # CompletionChunk.Kind("RightParen"),
-            8: '[',    # CompletionChunk.Kind("LeftBracket"),
-            9: ']',    # CompletionChunk.Kind("RightBracket"),
-            10: '{',   # CompletionChunk.Kind("LeftBrace"),
-            11: '}',   # CompletionChunk.Kind("RightBrace"),
-            12: '<',   # CompletionChunk.Kind("LeftAngle"),
-            13: '>',   # CompletionChunk.Kind("RightAngle"),
-            14: ', ',  # CompletionChunk.Kind("Comma"),
-            # 15:        CompletionChunk.Kind("ResultType"),
-            16: ':',   # CompletionChunk.Kind("Colon"),
-            17: ';',   # CompletionChunk.Kind("SemiColon"),
-            18: '=',   # CompletionChunk.Kind("Equal"),
-            19: ' ',   # CompletionChunk.Kind("HorizontalSpace"),
-            # 20:        CompletionChunk.Kind("VerticalSpace")
+    # 0: CompletionChunk.Kind("Optional"),
+    # 1: CompletionChunk.Kind("TypedText"),
+    # 2: CompletionChunk.Kind("Text"),
+    # 3: CompletionChunk.Kind("Placeholder"),
+    # 4: CompletionChunk.Kind("Informative"),
+    # 5 : CompletionChunk.Kind("CurrentParameter"),
+    6: "(",  # CompletionChunk.Kind("LeftParen"),
+    7: ")",  # CompletionChunk.Kind("RightParen"),
+    8: "[",  # CompletionChunk.Kind("LeftBracket"),
+    9: "]",  # CompletionChunk.Kind("RightBracket"),
+    10: "{",  # CompletionChunk.Kind("LeftBrace"),
+    11: "}",  # CompletionChunk.Kind("RightBrace"),
+    12: "<",  # CompletionChunk.Kind("LeftAngle"),
+    13: ">",  # CompletionChunk.Kind("RightAngle"),
+    14: ", ",  # CompletionChunk.Kind("Comma"),
+    # 15: CompletionChunk.Kind("ResultType"),
+    16: ":",  # CompletionChunk.Kind("Colon"),
+    17: ";",  # CompletionChunk.Kind("SemiColon"),
+    18: "=",  # CompletionChunk.Kind("Equal"),
+    19: " ",  # CompletionChunk.Kind("HorizontalSpace"),
+    # 20: CompletionChunk.Kind("VerticalSpace")
 }
 
 
@@ -2219,7 +2519,7 @@ class CompletionChunk:
             return self.name
 
         def __repr__(self):
-            return "<ChunkKind: %s>" % self
+            return f"<ChunkKind: {self}>"
 
     def __init__(self, completionString, key):
         self.cs = completionString
@@ -2232,8 +2532,11 @@ class CompletionChunk:
     @CachedProperty
     def spelling(self):
         if self.__kindNumber in SpellingCache:
-                return SpellingCache[self.__kindNumber]
-        return conf.lib.clang_getCompletionChunkText(self.cs, self.key).spelling.decode('utf-8')
+            return SpellingCache[self.__kindNumber]
+
+        return conf.lib.clang_getCompletionChunkText(
+            self.cs, self.key
+        )
 
     # We do not use @CachedProperty here, as the manual implementation is
     # apparently still significantly faster. Please profile carefully if you
@@ -2241,8 +2544,9 @@ class CompletionChunk:
     @property
     def __kindNumber(self):
         if self.__kindNumberCache == -1:
-            self.__kindNumberCache = \
-                conf.lib.clang_getCompletionChunkKind(self.cs, self.key)
+            self.__kindNumberCache = conf.lib.clang_getCompletionChunkKind(
+                self.cs, self.key
+            )
         return self.__kindNumberCache
 
     @CachedProperty
@@ -2251,9 +2555,11 @@ class CompletionChunk:
 
     @CachedProperty
     def string(self):
-        res = conf.lib.clang_getCompletionChunkCompletionString(self.cs, self.key)
+        res = conf.lib.clang_getCompletionChunkCompletionString(
+            self.cs, self.key
+        )
 
-        if (res):
+        if res:
             return CompletionString(res)
         else:
             None
@@ -2275,27 +2581,28 @@ class CompletionChunk:
 
 
 completionChunkKindMap = {
-            0: CompletionChunk.Kind("Optional"),
-            1: CompletionChunk.Kind("TypedText"),
-            2: CompletionChunk.Kind("Text"),
-            3: CompletionChunk.Kind("Placeholder"),
-            4: CompletionChunk.Kind("Informative"),
-            5: CompletionChunk.Kind("CurrentParameter"),
-            6: CompletionChunk.Kind("LeftParen"),
-            7: CompletionChunk.Kind("RightParen"),
-            8: CompletionChunk.Kind("LeftBracket"),
-            9: CompletionChunk.Kind("RightBracket"),
-            10: CompletionChunk.Kind("LeftBrace"),
-            11: CompletionChunk.Kind("RightBrace"),
-            12: CompletionChunk.Kind("LeftAngle"),
-            13: CompletionChunk.Kind("RightAngle"),
-            14: CompletionChunk.Kind("Comma"),
-            15: CompletionChunk.Kind("ResultType"),
-            16: CompletionChunk.Kind("Colon"),
-            17: CompletionChunk.Kind("SemiColon"),
-            18: CompletionChunk.Kind("Equal"),
-            19: CompletionChunk.Kind("HorizontalSpace"),
-            20: CompletionChunk.Kind("VerticalSpace")}
+    0: CompletionChunk.Kind("Optional"),
+    1: CompletionChunk.Kind("TypedText"),
+    2: CompletionChunk.Kind("Text"),
+    3: CompletionChunk.Kind("Placeholder"),
+    4: CompletionChunk.Kind("Informative"),
+    5: CompletionChunk.Kind("CurrentParameter"),
+    6: CompletionChunk.Kind("LeftParen"),
+    7: CompletionChunk.Kind("RightParen"),
+    8: CompletionChunk.Kind("LeftBracket"),
+    9: CompletionChunk.Kind("RightBracket"),
+    10: CompletionChunk.Kind("LeftBrace"),
+    11: CompletionChunk.Kind("RightBrace"),
+    12: CompletionChunk.Kind("LeftAngle"),
+    13: CompletionChunk.Kind("RightAngle"),
+    14: CompletionChunk.Kind("Comma"),
+    15: CompletionChunk.Kind("ResultType"),
+    16: CompletionChunk.Kind("Colon"),
+    17: CompletionChunk.Kind("SemiColon"),
+    18: CompletionChunk.Kind("Equal"),
+    19: CompletionChunk.Kind("HorizontalSpace"),
+    20: CompletionChunk.Kind("VerticalSpace"),
+}
 
 
 class CompletionString(ClangObject):
@@ -2307,7 +2614,7 @@ class CompletionString(ClangObject):
             return self.name
 
         def __repr__(self):
-            return "<Availability: %s>" % self
+            return f"<Availability: {self}>"
 
     def __len__(self):
         return self.num_chunks
@@ -2337,21 +2644,27 @@ class CompletionString(ClangObject):
         return _CXString()
 
     def __repr__(self):
-        brief_comment = self.briefComment.spelling.decode('utf-8') if self.briefComment.spelling else 'None'
-        return " | ".join([str(a) for a in self]) \
-               + " || Priority: " + str(self.priority) \
-               + " || Availability: " + str(self.availability) \
-               + " || Brief comment: " + brief_comment
+        return (
+            " | ".join([str(a) for a in self])
+            + " || Priority: "
+            + str(self.priority)
+            + " || Availability: "
+            + str(self.availability)
+            + " || Brief comment: "
+            + str(self.briefComment)
+        )
+
 
 availabilityKinds = {
-            0: CompletionChunk.Kind("Available"),
-            1: CompletionChunk.Kind("Deprecated"),
-            2: CompletionChunk.Kind("NotAvailable"),
-            3: CompletionChunk.Kind("NotAccessible")}
+    0: CompletionChunk.Kind("Available"),
+    1: CompletionChunk.Kind("Deprecated"),
+    2: CompletionChunk.Kind("NotAvailable"),
+    3: CompletionChunk.Kind("NotAccessible"),
+}
 
 
 class CodeCompletionResult(Structure):
-    _fields_ = [('cursorKind', c_int), ('completionString', c_object_p)]
+    _fields_ = [("cursorKind", c_int), ("completionString", c_object_p)]
 
     def __repr__(self):
         return str(CompletionString(self.completionString))
@@ -2366,8 +2679,10 @@ class CodeCompletionResult(Structure):
 
 
 class CCRStructure(Structure):
-    _fields_ = [('results', POINTER(CodeCompletionResult)),
-                ('numResults', c_int)]
+    _fields_ = [
+        ("results", POINTER(CodeCompletionResult)),
+        ("numResults", c_int),
+    ]
 
     def __len__(self):
         return self.numResults
@@ -2401,7 +2716,9 @@ class CodeCompletionResults(ClangObject):
                 self.ccr = ccr
 
             def __len__(self):
-                return int(conf.lib.clang_codeCompleteGetNumDiagnostics(self.ccr))
+                return int(
+                    conf.lib.clang_codeCompleteGetNumDiagnostics(self.ccr)
+                )
 
             def __getitem__(self, key):
                 diag = conf.lib.clang_codeCompleteGetDiagnostic(self.ccr, key)
@@ -2446,7 +2763,9 @@ class Index(ClangObject):
         If an error was encountered during parsing, a TranslationUnitLoadError
         will be raised.
         """
-        return TranslationUnit.from_source(path, args, unsaved_files, options, self)
+        return TranslationUnit.from_source(
+            path, args, unsaved_files, options, self
+        )
 
 
 class TranslationUnit(ClangObject):
@@ -2489,8 +2808,9 @@ class TranslationUnit(ClangObject):
     PARSE_INCLUDE_BRIEF_COMMENTS_IN_CODE_COMPLETION = 128
 
     @classmethod
-    def from_source(cls, filename, args=None, unsaved_files=None, options=0,
-                    index=None):
+    def from_source(
+        cls, filename, args=None, unsaved_files=None, options=0, index=None
+    ):
         """Create a TranslationUnit by parsing source.
 
         This is capable of processing source code both from files on the
@@ -2501,11 +2821,11 @@ class TranslationUnit(ClangObject):
         etc. e.g. ["-Wall", "-I/path/to/include"].
 
         In-memory file content can be provided via unsaved_files. This is an
-        iterable of 2-tuples. The first element is the str filename. The
-        second element defines the content. Content can be provided as str
-        source code or as file objects (anything with a read() method). If
-        a file object is being used, content will be read until EOF and the
-        read cursor will not be reset to its original position.
+        iterable of 2-tuples. The first element is the filename (str or
+        PathLike). The second element defines the content. Content can be
+        provided as str source code or as file objects (anything with a read()
+        method). If a file object is being used, content will be read until EOF
+        and the read cursor will not be reset to its original position.
 
         options is a bitwise or of TranslationUnit.PARSE_XXX flags which will
         control parsing behavior.
@@ -2541,8 +2861,8 @@ class TranslationUnit(ClangObject):
 
         args_array = None
         if len(args) > 0:
-            bargs = [arg.encode('utf-8') for arg in args]
-            args_array = (c_char_p * len(args))(* bargs)
+            bargs = [arg.encode("utf-8") for arg in args]
+            args_array = (c_char_p * len(args))(*bargs)
 
         unsaved_array = None
         if len(unsaved_files) > 0:
@@ -2551,15 +2871,15 @@ class TranslationUnit(ClangObject):
                 if hasattr(contents, "read"):
                     contents = contents.read()
 
-                unsaved_array[i].name = name.encode('utf-8')
-                unsaved_array[i].contents = contents.encode('utf-8')
+                unsaved_array[i].name = name.encode("utf-8")
+                unsaved_array[i].contents = contents.encode("utf-8")
                 unsaved_array[i].length = len(contents)
 
         ptr = conf.lib.clang_parseTranslationUnit(
-            index, filename.encode('utf-8') if filename else None,
+            index, filename,
             args_array, len(args),
             unsaved_array, len(unsaved_files),
-            options
+            options,
         )
 
         if not ptr:
@@ -2579,11 +2899,13 @@ class TranslationUnit(ClangObject):
 
         index is optional and is the Index instance to use. If not provided,
         a default Index will be created.
+
+        filename can be str or PathLike.
         """
         if index is None:
             index = Index.create()
 
-        ptr = conf.lib.clang_createTranslationUnit(index, filename.encode('utf-8'))
+        ptr = conf.lib.clang_createTranslationUnit(index, filename)
         if not ptr:
             raise TranslationUnitLoadError(filename)
 
@@ -2610,7 +2932,7 @@ class TranslationUnit(ClangObject):
     @property
     def spelling(self):
         """Get the original translation unit source file name."""
-        return conf.lib.clang_getTranslationUnitSpelling(self).decode('utf-8')
+        return conf.lib.clang_getTranslationUnitSpelling(self)
 
     def get_includes(self):
         """
@@ -2620,15 +2942,18 @@ class TranslationUnit(ClangObject):
         recursively iterate over header files included through precompiled
         headers.
         """
+
         def visitor(fobj, lptr, depth, includes):
             if depth > 0:
                 loc = lptr.contents
-                includes.append(FileInclusion(loc.file, File(fobj), loc, depth))
+                includes.append(
+                    FileInclusion(loc.file, File(fobj), loc, depth)
+                )
 
         # Automatically adapt CIndex/ctype pointers to python objects
         includes = []
         conf.lib.clang_getInclusions(
-            self, callbacks['translation_unit_includes'](visitor), includes
+            self, callbacks["translation_unit_includes"](visitor), includes
         )
 
         return iter(includes)
@@ -2672,11 +2997,11 @@ class TranslationUnit(ClangObject):
         f = self.get_file(filename)
 
         if len(locations) < 2:
-            raise Exception('Must pass object with at least 2 elements')
+            raise Exception("Must pass object with at least 2 elements")
 
         start_location, end_location = locations
 
-        if hasattr(start_location, '__len__'):
+        if hasattr(start_location, "__len__"):
             start_location = SourceLocation.from_position(
                 self, f, start_location[0], start_location[1]
             )
@@ -2685,7 +3010,7 @@ class TranslationUnit(ClangObject):
                 self, f, start_location
             )
 
-        if hasattr(end_location, '__len__'):
+        if hasattr(end_location, "__len__"):
             end_location = SourceLocation.from_position(
                 self, f, end_location[0], end_location[1]
             )
@@ -2702,6 +3027,7 @@ class TranslationUnit(ClangObject):
         """
         Return an iterable (and indexable) object containing the diagnostics.
         """
+
         class DiagIterator:
             def __init__(self, tu):
                 self.tu = tu
@@ -2739,7 +3065,7 @@ class TranslationUnit(ClangObject):
                     value = value.read()
                     print(value)
                 if not isinstance(value, str):
-                    raise TypeError('Unexpected unsaved file contents.')
+                    raise TypeError("Unexpected unsaved file contents.")
                 unsaved_files_array[i].name = name
                 unsaved_files_array[i].contents = value
                 unsaved_files_array[i].length = len(value)
@@ -2760,20 +3086,27 @@ class TranslationUnit(ClangObject):
         case, the reason(s) why should be available via
         TranslationUnit.diagnostics().
 
-        filename -- The path to save the translation unit to.
+        filename -- The path to save the translation unit to (str or PathLike).
         """
         options = conf.lib.clang_defaultSaveOptions(self)
         result = int(
-            conf.lib.clang_saveTranslationUnit(
-                self, filename.encode('utf-8'), options
-            )
+            conf.lib.clang_saveTranslationUnit(self, filename, options)
         )
         if result != 0:
-            raise TranslationUnitSaveError(result, 'Error saving TranslationUnit.')
+            raise TranslationUnitSaveError(
+                result, "Error saving TranslationUnit."
+            )
 
-    def codeComplete(self, path, line, column, unsaved_files=None,
-                     include_macros=False, include_code_patterns=False,
-                     include_brief_comments=False):
+    def codeComplete(
+        self,
+        path,
+        line,
+        column,
+        unsaved_files=None,
+        include_macros=False,
+        include_code_patterns=False,
+        include_brief_comments=False,
+    ):
         """
         Code complete in this translation unit.
 
@@ -2800,22 +3133,24 @@ class TranslationUnit(ClangObject):
         if len(unsaved_files):
             unsaved_files_array = (_CXUnsavedFile * len(unsaved_files))()
             for i, (name, value) in enumerate(unsaved_files):
-                if not isinstance(value, BASESTRING):
+                if not isinstance(value, str):
                     # FIXME: It would be great to support an efficient version
                     # of this, one day.
                     value = value.read()
                     print(value)
-                if not isinstance(value, BASESTRING):
-                    raise TypeError('Unexpected unsaved file contents.')
-                unsaved_files_array[i].name = name.encode('utf-8')
-                unsaved_files_array[i].contents = value.encode('utf-8')
+                if not isinstance(value, str):
+                    raise TypeError("Unexpected unsaved file contents.")
+                unsaved_files_array[i].name = name.encode("utf-8")
+                unsaved_files_array[i].contents = value.encode("utf-8")
                 unsaved_files_array[i].length = len(value)
+
         ptr = conf.lib.clang_codeCompleteAt(
-            self, path.encode('utf-8'), line, column,
-            unsaved_files_array, len(unsaved_files), options
+            self, path, line, column,
+            unsaved_files_array, len(unsaved_files), options,
         )
         if ptr:
             return CodeCompletionResults(ptr)
+
         return None
 
     def get_tokens(self, locations=None, extent=None):
@@ -2841,12 +3176,14 @@ class File(ClangObject):
     @staticmethod
     def from_name(translation_unit, file_name):
         """Retrieve a file handle within the given translation unit."""
-        return File(conf.lib.clang_getFile(translation_unit, file_name.encode('utf-8')))
+        return File(
+            conf.lib.clang_getFile(translation_unit, file_name)
+        )
 
     @property
     def name(self):
         """Return the complete file and path name of the file."""
-        return conf.lib.clang_getCString(conf.lib.clang_getFileName(self)).decode('utf-8')
+        return conf.lib.clang_getFileName(self)
 
     @property
     def time(self):
@@ -2857,7 +3194,16 @@ class File(ClangObject):
         return self.name
 
     def __repr__(self):
-        return "<File: %s>" % (self.name)
+        return f"<File: {self.name}>"
+
+    @staticmethod
+    def from_result(res, fn, args):
+        assert isinstance(res, c_object_p)
+        res = File(res)
+
+        # Copy a reference to the TranslationUnit to prevent premature GC.
+        res._tu = args[0]._tu
+        return res
 
     @staticmethod
     def from_cursor_result(res, fn, args):
@@ -2868,7 +3214,7 @@ class File(ClangObject):
         return res
 
 
-class FileInclusion(object):
+class FileInclusion:
     """
     The FileInclusion class represents the inclusion of one source file by
     another via a '#include' directive or as the input file for the translation
@@ -2907,16 +3253,19 @@ class CompilationDatabaseError(Exception):
         assert isinstance(enumeration, int)
 
         if enumeration > 1:
-            raise Exception("Encountered undefined CompilationDatabase error "
-                            "constant: %d. Please file a bug to have this "
-                            "value supported." % enumeration)
+            raise Exception(
+                "Encountered undefined CompilationDatabase error "
+                f"constant: {enumeration:d}. Please file a bug to have this "
+                "value supported."
+            )
 
         self.cdb_error = enumeration
-        Exception.__init__(self, 'Error %d: %s' % (enumeration, message))
+        Exception.__init__(self, f"Error {enumeration:d}: {message}")
 
 
-class CompileCommand(object):
+class CompileCommand:
     """Represents the compile command used to build a file"""
+
     def __init__(self, cmd, ccmds):
         self.cmd = cmd
         # Keep a reference to the originating CompileCommands
@@ -2927,6 +3276,11 @@ class CompileCommand(object):
     def directory(self):
         """Get the working directory for this CompileCommand"""
         return conf.lib.clang_CompileCommand_getDirectory(self.cmd)
+
+    @property
+    def filename(self):
+        """Get the working filename for this CompileCommand"""
+        return conf.lib.clang_CompileCommand_getFilename(self.cmd)
 
     @property
     def arguments(self):
@@ -2941,11 +3295,12 @@ class CompileCommand(object):
             yield conf.lib.clang_CompileCommand_getArg(self.cmd, i)
 
 
-class CompileCommands(object):
+class CompileCommands:
     """
     CompileCommands is an iterable object containing all CompileCommand
     that can be used for building a specific file.
     """
+
     def __init__(self, ccmds):
         self.ccmds = ccmds
 
@@ -2982,7 +3337,9 @@ class CompilationDatabase(ClangObject):
     @staticmethod
     def from_result(res, fn, args):
         if not res:
-            raise CompilationDatabaseError(0, "CompilationDatabase loading failed")
+            raise CompilationDatabaseError(
+                0, "CompilationDatabase loading failed"
+            )
         return CompilationDatabase(res)
 
     @staticmethod
@@ -2991,12 +3348,11 @@ class CompilationDatabase(ClangObject):
         errorCode = c_uint()
         try:
             cdb = conf.lib.clang_CompilationDatabase_fromDirectory(
-                buildDir.encode('utf-8'), byref(errorCode)
+                buildDir, byref(errorCode)
             )
         except CompilationDatabaseError:
             raise CompilationDatabaseError(
-                int(errorCode.value),
-                "CompilationDatabase loading failed"
+                int(errorCode.value), "CompilationDatabase loading failed"
             )
         return cdb
 
@@ -3006,7 +3362,7 @@ class CompilationDatabase(ClangObject):
         build filename. Returns None if filename is not found in the database.
         """
         return conf.lib.clang_CompilationDatabase_getCompileCommands(
-            self, filename.encode('utf-8')
+            self, filename
         )
 
     def getAllCompileCommands(self):
@@ -3026,10 +3382,8 @@ class Token(Structure):
     Tokens are obtained from parsed TranslationUnit instances. You currently
     can't create tokens manually.
     """
-    _fields_ = [
-        ('int_data', c_uint * 4),
-        ('ptr_data', c_void_p)
-    ]
+
+    _fields_ = [("int_data", c_uint * 4), ("ptr_data", c_void_p)]
 
     @property
     def spelling(self):
@@ -3037,7 +3391,7 @@ class Token(Structure):
 
         This is the textual representation of the token in source.
         """
-        return conf.lib.clang_getTokenSpelling(self._tu, self).decode('utf-8')
+        return conf.lib.clang_getTokenSpelling(self._tu, self)
 
     @property
     def kind(self):
@@ -3058,325 +3412,175 @@ class Token(Structure):
     def cursor(self):
         """The Cursor this Token corresponds to."""
         cursor = Cursor()
+        cursor._tu = self._tu
 
         conf.lib.clang_annotateTokens(self._tu, byref(self), 1, byref(cursor))
 
         return cursor
 
+
 # Now comes the plumbing to hook up the C library.
 
 # Register callback types in common container.
-callbacks['translation_unit_includes'] = CFUNCTYPE(
+callbacks["translation_unit_includes"] = CFUNCTYPE(
     None, c_object_p, POINTER(SourceLocation), c_uint, py_object
 )
-callbacks['cursor_visit'] = CFUNCTYPE(c_int, Cursor, Cursor, py_object)
-callbacks['fields_visit'] = CFUNCTYPE(c_int, Cursor, py_object)
+callbacks["cursor_visit"] = CFUNCTYPE(c_int, Cursor, Cursor, py_object)
+callbacks["fields_visit"] = CFUNCTYPE(c_int, Cursor, py_object)
+
+def f(*args, **kwargs):
+    breakpoint()
+    return None
 
 # Functions strictly alphabetical order.
 functionList = [
     (
         "clang_annotateTokens",
-        [TranslationUnit, POINTER(Token), c_uint, POINTER(Cursor)]
+        [TranslationUnit, POINTER(Token), c_uint, POINTER(Cursor)],
     ),
-    (
-        "clang_CompilationDatabase_dispose",
-        [c_object_p]
-    ),
+    ("clang_CompilationDatabase_dispose", [c_object_p]),
     (
         "clang_CompilationDatabase_fromDirectory",
-        [c_char_p, POINTER(c_uint)],
+        [c_interop_string, POINTER(c_uint)],
         c_object_p,
-        CompilationDatabase.from_result
+        CompilationDatabase.from_result,
     ),
     (
         "clang_CompilationDatabase_getAllCompileCommands",
         [c_object_p],
         c_object_p,
-        CompileCommands.from_result
+        CompileCommands.from_result,
     ),
     (
         "clang_CompilationDatabase_getCompileCommands",
-        [c_object_p, c_char_p],
+        [c_object_p, c_interop_string],
         c_object_p,
-        CompileCommands.from_result
+        CompileCommands.from_result,
     ),
-    (
-        "clang_CompileCommands_dispose",
-        [c_object_p]
-    ),
-    (
-        "clang_CompileCommands_getCommand",
-        [c_object_p, c_uint],
-        c_object_p
-    ),
-    (
-        "clang_CompileCommands_getSize",
-        [c_object_p],
-        c_uint
-    ),
+    ("clang_CompileCommands_dispose", [c_object_p]),
+    ("clang_CompileCommands_getCommand", [c_object_p, c_uint], c_object_p),
+    ("clang_CompileCommands_getSize", [c_object_p], c_uint),
     (
         "clang_CompileCommand_getArg",
         [c_object_p, c_uint],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
     (
         "clang_CompileCommand_getDirectory",
         [c_object_p],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
     (
-        "clang_CompileCommand_getNumArgs",
+        "clang_CompileCommand_getFilename",
         [c_object_p],
-        c_uint
+        _CXString,
+        _CXString.from_result,
     ),
+    ("clang_CompileCommand_getNumArgs", [c_object_p], c_uint),
     (
         "clang_codeCompleteAt",
-        [TranslationUnit, c_char_p, c_int, c_int, c_void_p, c_int, c_int],
-        POINTER(CCRStructure)
+        [TranslationUnit, c_interop_string, c_int, c_int, c_void_p, c_int, c_int],
+        POINTER(CCRStructure),
     ),
     (
         "clang_codeCompleteGetDiagnostic",
         [CodeCompletionResults, c_int],
-        c_object_p
+        Diagnostic,
     ),
+    ("clang_codeCompleteGetNumDiagnostics", [CodeCompletionResults], c_int),
+    ("clang_createIndex", [c_int, c_int], c_object_p),
+    ("clang_createTranslationUnit", [Index, c_interop_string], c_object_p),
+    ("clang_CXXConstructor_isConvertingConstructor", [Cursor], bool),
+    ("clang_CXXConstructor_isCopyConstructor", [Cursor], bool),
+    ("clang_CXXConstructor_isDefaultConstructor", [Cursor], bool),
+    ("clang_CXXConstructor_isMoveConstructor", [Cursor], bool),
+    ("clang_CXXField_isMutable", [Cursor], bool),
+    ("clang_CXXMethod_isConst", [Cursor], bool),
+    ("clang_CXXMethod_isDefaulted", [Cursor], bool),
+    ("clang_CXXMethod_isPureVirtual", [Cursor], bool),
+    ("clang_CXXMethod_isStatic", [Cursor], bool),
+    ("clang_CXXMethod_isVirtual", [Cursor], bool),
+    ("clang_CXXRecord_isAbstract", [Cursor], bool),
+    ("clang_EnumDecl_isScoped", [Cursor], bool),
+    ("clang_defaultDiagnosticDisplayOptions", [], c_uint),
+    ("clang_defaultSaveOptions", [TranslationUnit], c_uint),
+    ("clang_disposeCodeCompleteResults", [CodeCompletionResults]),
+    # ("clang_disposeCXTUResourceUsage",
+    #  [CXTUResourceUsage]),
+    ("clang_disposeDiagnostic", [Diagnostic]),
+    ("clang_disposeIndex", [Index]),
+    ("clang_disposeString", [_CXString]),
+    ("clang_disposeTokens", [TranslationUnit, POINTER(Token), c_uint]),
+    ("clang_disposeTranslationUnit", [TranslationUnit]),
+    ("clang_equalCursors", [Cursor, Cursor], bool),
+    ("clang_equalLocations", [SourceLocation, SourceLocation], bool),
+    ("clang_equalRanges", [SourceRange, SourceRange], bool),
+    ("clang_equalTypes", [Type, Type], bool),
     (
-        "clang_codeCompleteGetNumDiagnostics",
-        [CodeCompletionResults],
-        c_int
+        "clang_formatDiagnostic",
+        [Diagnostic, c_uint],
+        _CXString,
+        _CXString.from_result,
     ),
-    (
-        "clang_createIndex",
-        [c_int, c_int],
-        c_object_p
-    ),
-    (
-        "clang_createTranslationUnit",
-        [Index, c_char_p],
-        c_object_p
-    ),
-    (
-        "clang_CXXField_isMutable",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_CXXMethod_isConst",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_CXXMethod_isPureVirtual",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_CXXMethod_isStatic",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_CXXMethod_isVirtual",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_defaultSaveOptions",
-        [TranslationUnit],
-        c_uint
-    ),
-    (
-        "clang_disposeCodeCompleteResults",
-        [CodeCompletionResults]
-    ),
-    # (
-    #     "clang_disposeCXTUResourceUsage",
-    #     [CXTUResourceUsage]
-    # ),
-    (
-        "clang_disposeDiagnostic",
-        [Diagnostic]
-    ),
-    (
-        "clang_disposeIndex",
-        [Index]
-    ),
-    (
-        "clang_disposeString",
-        [_CXString]
-    ),
-    (
-        "clang_disposeTokens",
-        [TranslationUnit, POINTER(Token), c_uint]
-    ),
-    (
-        "clang_disposeTranslationUnit",
-        [TranslationUnit]
-    ),
-    (
-        "clang_equalCursors",
-        [Cursor, Cursor],
-        bool
-    ),
-    (
-        "clang_equalLocations",
-        [SourceLocation, SourceLocation],
-        bool
-    ),
-    (
-        "clang_equalRanges",
-        [SourceRange, SourceRange],
-        bool
-    ),
-    (
-        "clang_equalTypes",
-        [Type, Type],
-        bool
-    ),
-    (
-        "clang_getArgType",
-        [Type, c_uint],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getArrayElementType",
-        [Type],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getArraySize",
-        [Type],
-        c_longlong
-    ),
-    (
-        "clang_getFieldDeclBitWidth",
-        [Cursor],
-        c_int
-    ),
-    (
-        "clang_getCanonicalCursor",
-        [Cursor],
-        Cursor,
-        Cursor.from_cursor_result
-    ),
-    (
-        "clang_getCanonicalType",
-        [Type],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getCompletionAvailability",
-        [c_void_p],
-        c_int
-    ),
+    ("clang_getArgType", [Type, c_uint], Type, Type.from_result),
+    ("clang_getArrayElementType", [Type], Type, Type.from_result),
+    ("clang_getArraySize", [Type], c_longlong),
+    ("clang_getFieldDeclBitWidth", [Cursor], c_int),
+    ("clang_getCanonicalCursor", [Cursor], Cursor, Cursor.from_cursor_result),
+    ("clang_getCanonicalType", [Type], Type, Type.from_result),
+    ("clang_getChildDiagnostics", [Diagnostic], c_object_p),
+    ("clang_getCompletionAvailability", [c_void_p], c_int),
     (
         "clang_getCompletionBriefComment",
         [c_void_p],
-        _CXString
+        _CXString,
+        _CXString.from_result,
     ),
     (
         "clang_getCompletionChunkCompletionString",
         [c_void_p, c_int],
-        c_object_p
+        c_object_p,
     ),
-    (
-        "clang_getCompletionChunkKind",
-        [c_void_p, c_int],
-        c_int
-    ),
+    ("clang_getCompletionChunkKind", [c_void_p, c_int], c_int),
     (
         "clang_getCompletionChunkText",
         [c_void_p, c_int],
-        _CXString
-    ),
-    (
-        "clang_getCompletionPriority",
-        [c_void_p],
-        c_int
-    ),
-    (
-        "clang_getCString",
-        [_CXString],
-        c_char_p
-    ),
-    (
-        "clang_getCursor",
-        [TranslationUnit, SourceLocation],
-        Cursor
-    ),
-    (
-        "clang_getCursorDefinition",
-        [Cursor],
-        Cursor,
-        Cursor.from_result
-    ),
-    (
-        "clang_getCursorDisplayName",
-        [Cursor],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
-    (
-        "clang_getCursorExtent",
-        [Cursor],
-        SourceRange
-    ),
+    ("clang_getCompletionPriority", [c_void_p], c_int),
+    ("clang_getCString", [_CXString], c_interop_string, c_interop_string.to_python_string),
+    ("clang_getCursor", [TranslationUnit, SourceLocation], Cursor),
+    ("clang_getCursorAvailability", [Cursor], c_int),
+    ("clang_getCursorDefinition", [Cursor], Cursor, Cursor.from_result),
+    ("clang_getCursorDisplayName", [Cursor], _CXString, _CXString.from_result),
+    ("clang_getCursorExtent", [Cursor], SourceRange),
     (
         "clang_getCursorLexicalParent",
         [Cursor],
         Cursor,
-        Cursor.from_cursor_result
+        Cursor.from_cursor_result,
     ),
-    (
-        "clang_getCursorLocation",
-        [Cursor],
-        SourceLocation
-    ),
-    (
-        "clang_getCursorReferenced",
-        [Cursor],
-        Cursor,
-        Cursor.from_result
-    ),
+    ("clang_getCursorLocation", [Cursor], SourceLocation),
+    ("clang_getCursorReferenced", [Cursor], Cursor, Cursor.from_result),
     (
         "clang_getCursorReferenceNameRange",
         [Cursor, c_uint, c_uint],
-        SourceRange
+        SourceRange,
     ),
+    ("clang_getCursorResultType", [Cursor], Type, Type.from_result),
     (
         "clang_getCursorSemanticParent",
         [Cursor],
         Cursor,
-        Cursor.from_cursor_result
+        Cursor.from_cursor_result,
     ),
-    (
-        "clang_getCursorSpelling",
-        [Cursor],
-        _CXString,
-        _CXString.from_result
-    ),
-    (
-        "clang_getCursorType",
-        [Cursor],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getCursorUSR",
-        [Cursor],
-        _CXString,
-        _CXString.from_result
-    ),
-    (
-        "clang_Cursor_getMangling",
-        [Cursor],
-        _CXString,
-        _CXString.from_result
-    ),
+    ("clang_getCursorSpelling", [Cursor], _CXString, _CXString.from_result),
+    ("clang_getCursorType", [Cursor], Type, Type.from_result),
+    ("clang_getCursorUSR", [Cursor], _CXString, _CXString.from_result),
+    ("clang_Cursor_getMangling", [Cursor], _CXString, _CXString.from_result),
     (
         "clang_Cursor_getLiteralString",
         [Cursor],
@@ -3397,492 +3601,228 @@ functionList = [
         "clang_Cursor_getBinaryOpcode",
         [Cursor],
     ),
-    # (
-    #     "clang_getCXTUResourceUsage",
-    #     [TranslationUnit],
-    #     CXTUResourceUsage
-    # ),
-    (
-        "clang_getCXXAccessSpecifier",
-        [Cursor],
-        c_uint
-    ),
+    # ("clang_getCXTUResourceUsage",
+    #  [TranslationUnit],
+    #  CXTUResourceUsage),
+    ("clang_getCXXAccessSpecifier", [Cursor], c_uint),
     (
         "clang_getDeclObjCTypeEncoding",
         [Cursor],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
-    (
-        "clang_getDiagnostic",
-        [c_object_p, c_uint],
-        c_object_p
-    ),
-    (
-        "clang_getDiagnosticCategory",
-        [Diagnostic],
-        c_uint
-    ),
+    ("clang_getDiagnostic", [c_object_p, c_uint], c_object_p),
+    ("clang_getDiagnosticCategory", [Diagnostic], c_uint),
     (
         "clang_getDiagnosticCategoryText",
         [Diagnostic],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
     (
         "clang_getDiagnosticFixIt",
         [Diagnostic, c_uint, POINTER(SourceRange)],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
-    (
-        "clang_getDiagnosticLocation",
-        [Diagnostic],
-        SourceLocation
-    ),
-    (
-        "clang_getDiagnosticNumFixIts",
-        [Diagnostic],
-        c_uint
-    ),
-    (
-        "clang_getDiagnosticNumRanges",
-        [Diagnostic],
-        c_uint
-    ),
+    ("clang_getDiagnosticInSet", [c_object_p, c_uint], c_object_p),
+    ("clang_getDiagnosticLocation", [Diagnostic], SourceLocation),
+    ("clang_getDiagnosticNumFixIts", [Diagnostic], c_uint),
+    ("clang_getDiagnosticNumRanges", [Diagnostic], c_uint),
     (
         "clang_getDiagnosticOption",
         [Diagnostic, POINTER(_CXString)],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
-    (
-        "clang_getDiagnosticRange",
-        [Diagnostic, c_uint],
-        SourceRange
-    ),
-    (
-        "clang_getDiagnosticSeverity",
-        [Diagnostic],
-        c_int
-    ),
+    ("clang_getDiagnosticRange", [Diagnostic, c_uint], SourceRange),
+    ("clang_getDiagnosticSeverity", [Diagnostic], c_int),
     (
         "clang_getDiagnosticSpelling",
         [Diagnostic],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
-    (
-        "clang_getElementType",
-        [Type],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getEnumConstantDeclUnsignedValue",
-        [Cursor],
-        c_ulonglong
-    ),
-    (
-        "clang_getEnumConstantDeclValue",
-        [Cursor],
-        c_longlong
-    ),
-    (
-        "clang_getEnumDeclIntegerType",
-        [Cursor],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getFile",
-        [TranslationUnit, c_char_p],
-        c_object_p
-    ),
-    (
-        "clang_getFileName",
-        [File],
-        _CXString  # TODO go through _CXString.from_result?
-    ),
-    (
-        "clang_getFileTime",
-        [File],
-        c_uint
-    ),
-    (
-        "clang_getIBOutletCollectionType",
-        [Cursor],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getIncludedFile",
-        [Cursor],
-        File,
-        File.from_cursor_result
-    ),
+    ("clang_getElementType", [Type], Type, Type.from_result),
+    ("clang_getEnumConstantDeclUnsignedValue", [Cursor], c_ulonglong),
+    ("clang_getEnumConstantDeclValue", [Cursor], c_longlong),
+    ("clang_getEnumDeclIntegerType", [Cursor], Type, Type.from_result),
+    ("clang_getFile", [TranslationUnit, c_interop_string], c_object_p),
+    ("clang_getFileName", [File], _CXString, _CXString.from_result),
+    ("clang_getFileTime", [File], c_uint),
+    ("clang_getIBOutletCollectionType", [Cursor], Type, Type.from_result),
+    ("clang_getIncludedFile", [Cursor], c_object_p, File.from_result),
     (
         "clang_getInclusions",
-        [TranslationUnit, callbacks['translation_unit_includes'], py_object]
+        [TranslationUnit, callbacks["translation_unit_includes"], py_object],
     ),
     (
         "clang_getInstantiationLocation",
-        [SourceLocation, POINTER(c_object_p), POINTER(c_uint), POINTER(c_uint), POINTER(c_uint)]
+        [
+            SourceLocation,
+            POINTER(c_object_p),
+            POINTER(c_uint),
+            POINTER(c_uint),
+            POINTER(c_uint),
+        ],
     ),
     (
         "clang_getLocation",
         [TranslationUnit, File, c_uint, c_uint],
-        SourceLocation
+        SourceLocation,
     ),
     (
         "clang_getLocationForOffset",
         [TranslationUnit, File, c_uint],
-        SourceLocation
+        SourceLocation,
     ),
-    (
-        "clang_getNullCursor",
-        None,
-        Cursor
-    ),
-    (
-        "clang_getNumArgTypes",
-        [Type],
-        c_uint
-    ),
-    (
-        "clang_getNumCompletionChunks",
-        [c_void_p],
-        c_int
-    ),
-    (
-        "clang_getNumDiagnostics",
-        [c_object_p],
-        c_uint
-    ),
-    (
-        "clang_getNumElements",
-        [Type],
-        c_longlong
-    ),
-    (
-        "clang_getNumOverloadedDecls",
-        [Cursor],
-        c_uint
-    ),
+    ("clang_getNullCursor", None, Cursor),
+    ("clang_getNumArgTypes", [Type], c_uint),
+    ("clang_getNumCompletionChunks", [c_void_p], c_int),
+    ("clang_getNumDiagnostics", [c_object_p], c_uint),
+    ("clang_getNumDiagnosticsInSet", [c_object_p], c_uint),
+    ("clang_getNumElements", [Type], c_longlong),
+    ("clang_getNumOverloadedDecls", [Cursor], c_uint),
     (
         "clang_getOverloadedDecl",
         [Cursor, c_uint],
         Cursor,
-        Cursor.from_cursor_result
+        Cursor.from_cursor_result,
     ),
-    (
-        "clang_getPointeeType",
-        [Type],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getRange",
-        [SourceLocation, SourceLocation],
-        SourceRange
-    ),
-    (
-        "clang_getRangeEnd",
-        [SourceRange],
-        SourceLocation
-    ),
-    (
-        "clang_getRangeStart",
-        [SourceRange],
-        SourceLocation
-    ),
-    (
-        "clang_getResultType",
-        [Type],
-        Type,
-        Type.from_result
-    ),
+    ("clang_getPointeeType", [Type], Type, Type.from_result),
+    ("clang_getRange", [SourceLocation, SourceLocation], SourceRange),
+    ("clang_getRangeEnd", [SourceRange], SourceLocation),
+    ("clang_getRangeStart", [SourceRange], SourceLocation),
+    ("clang_getResultType", [Type], Type, Type.from_result),
     (
         "clang_getSpecializedCursorTemplate",
         [Cursor],
         Cursor,
-        Cursor.from_cursor_result
+        Cursor.from_cursor_result,
     ),
-    (
-        "clang_getTemplateCursorKind",
-        [Cursor],
-        c_uint
-    ),
-    (
-        "clang_getTokenExtent",
-        [TranslationUnit, Token],
-        SourceRange
-    ),
-    (
-        "clang_getTokenKind",
-        [Token],
-        c_uint
-    ),
-    (
-        "clang_getTokenLocation",
-        [TranslationUnit, Token],
-        SourceLocation
-    ),
+    ("clang_getTemplateCursorKind", [Cursor], c_uint),
+    ("clang_getTokenExtent", [TranslationUnit, Token], SourceRange),
+    ("clang_getTokenKind", [Token], c_uint),
+    ("clang_getTokenLocation", [TranslationUnit, Token], SourceLocation),
     (
         "clang_getTokenSpelling",
         [TranslationUnit, Token],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
     (
         "clang_getTranslationUnitCursor",
         [TranslationUnit],
         Cursor,
-        Cursor.from_result
+        Cursor.from_result,
     ),
     (
         "clang_getTranslationUnitSpelling",
         [TranslationUnit],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
-    (
-        "clang_getTUResourceUsageName",
-        [c_uint],
-        c_char_p
-    ),
-    (
-        "clang_getTypeDeclaration",
-        [Type],
-        Cursor,
-        Cursor.from_result
-    ),
-    (
-        "clang_getTypedefDeclUnderlyingType",
-        [Cursor],
-        Type,
-        Type.from_result
-    ),
-    (
-        "clang_getTypeKindSpelling",
-        [c_uint],
-        _CXString,
-        _CXString.from_result
-    ),
-    (
-        "clang_getTypeSpelling",
-        [Type],
-        _CXString,
-        _CXString.from_result
-    ),
-    (
-        "clang_hashCursor",
-        [Cursor],
-        c_uint
-    ),
-    (
-        "clang_isAttribute",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isConstQualifiedType",
-        [Type],
-        bool
-    ),
-    (
-        "clang_isCursorDefinition",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_isDeclaration",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isExpression",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isFileMultipleIncludeGuarded",
-        [TranslationUnit, File],
-        bool
-    ),
-    (
-        "clang_isFunctionTypeVariadic",
-        [Type],
-        bool
-    ),
-    (
-        "clang_isInvalid",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isPODType",
-        [Type],
-        bool
-    ),
-    (
-        "clang_isPreprocessing",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isReference",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isRestrictQualifiedType",
-        [Type],
-        bool
-    ),
-    (
-        "clang_isStatement",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isTranslationUnit",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isUnexposed",
-        [CursorKind],
-        bool
-    ),
-    (
-        "clang_isVirtualBase",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_isVolatileQualifiedType",
-        [Type],
-        bool
-    ),
+    ("clang_getTUResourceUsageName", [c_uint], c_interop_string, c_interop_string.to_python_string),
+    ("clang_getTypeDeclaration", [Type], Cursor, Cursor.from_result),
+    ("clang_getTypedefDeclUnderlyingType", [Cursor], Type, Type.from_result),
+    ("clang_getTypedefName", [Type], _CXString, _CXString.from_result),
+    ("clang_getTypeKindSpelling", [c_uint], _CXString, _CXString.from_result),
+    ("clang_getTypeSpelling", [Type], _CXString, _CXString.from_result),
+    ("clang_hashCursor", [Cursor], c_uint),
+    ("clang_isAttribute", [CursorKind], bool),
+    ("clang_isConstQualifiedType", [Type], bool),
+    ("clang_isCursorDefinition", [Cursor], bool),
+    ("clang_isDeclaration", [CursorKind], bool),
+    ("clang_isExpression", [CursorKind], bool),
+    ("clang_isFileMultipleIncludeGuarded", [TranslationUnit, File], bool),
+    ("clang_isFunctionTypeVariadic", [Type], bool),
+    ("clang_isInvalid", [CursorKind], bool),
+    ("clang_isPODType", [Type], bool),
+    ("clang_isPreprocessing", [CursorKind], bool),
+    ("clang_isReference", [CursorKind], bool),
+    ("clang_isRestrictQualifiedType", [Type], bool),
+    ("clang_isStatement", [CursorKind], bool),
+    ("clang_isTranslationUnit", [CursorKind], bool),
+    ("clang_isUnexposed", [CursorKind], bool),
+    ("clang_isVirtualBase", [Cursor], bool),
+    ("clang_isVolatileQualifiedType", [Type], bool),
     (
         "clang_parseTranslationUnit",
-        [Index, c_char_p, c_void_p, c_int, c_void_p, c_int, c_int],
-        c_object_p
+        [Index, c_interop_string, c_void_p, c_int, c_void_p, c_int, c_int],
+        c_object_p,
     ),
     (
         "clang_reparseTranslationUnit",
         [TranslationUnit, c_int, c_void_p, c_int],
-        c_int
+        c_int,
     ),
-    (
-        "clang_saveTranslationUnit",
-        [TranslationUnit, c_char_p, c_uint],
-        c_int
-    ),
+    ("clang_saveTranslationUnit", [TranslationUnit, c_interop_string, c_uint], c_int),
     (
         "clang_tokenize",
-        [TranslationUnit, SourceRange, POINTER(POINTER(Token)), POINTER(c_uint)]
+        [
+            TranslationUnit,
+            SourceRange,
+            POINTER(POINTER(Token)),
+            POINTER(c_uint),
+        ],
     ),
     (
         "clang_visitChildren",
-        [Cursor, callbacks['cursor_visit'], py_object],
-        c_uint
+        [Cursor, callbacks["cursor_visit"], py_object],
+        c_uint,
     ),
-    (
-        "clang_Cursor_getNumArguments",
-        [Cursor],
-        c_int
-    ),
-    (
-        "clang_Cursor_getArgument",
-        [Cursor, c_uint],
-        Cursor,
-        Cursor.from_result
-    ),
-    (
-        "clang_Cursor_getNumTemplateArguments",
-        [Cursor],
-        c_int
-    ),
+    ("clang_Cursor_getNumArguments", [Cursor], c_int),
+    ("clang_Cursor_getArgument", [Cursor, c_uint], Cursor, Cursor.from_result),
+    ("clang_Cursor_getNumTemplateArguments", [Cursor], c_int),
     (
         "clang_Cursor_getTemplateArgumentKind",
         [Cursor, c_uint],
-        TemplateArgumentKind.from_id
+        TemplateArgumentKind.from_id,
     ),
     (
         "clang_Cursor_getTemplateArgumentType",
         [Cursor, c_uint],
         Type,
-        Type.from_result
+        Type.from_result,
     ),
-    (
-        "clang_Cursor_getTemplateArgumentValue",
-        [Cursor, c_uint],
-        c_longlong
-    ),
+    ("clang_Cursor_getTemplateArgumentValue", [Cursor, c_uint], c_longlong),
     (
         "clang_Cursor_getTemplateArgumentUnsignedValue",
         [Cursor, c_uint],
-        c_ulonglong
+        c_ulonglong,
     ),
-    (
-        "clang_Cursor_isAnonymous",
-        [Cursor],
-        bool
-    ),
-    (
-        "clang_Cursor_isBitField",
-        [Cursor],
-        bool
-    ),
+    ("clang_Cursor_isAnonymous", [Cursor], bool),
+    ("clang_Cursor_isBitField", [Cursor], bool),
     (
         "clang_Cursor_getBriefCommentText",
         [Cursor],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
     (
         "clang_Cursor_getRawCommentText",
         [Cursor],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result,
     ),
+    ("clang_Cursor_getOffsetOfField", [Cursor], c_longlong),
+    ("clang_Type_getAlignOf", [Type], c_longlong),
+    ("clang_Type_getClassType", [Type], Type, Type.from_result),
+    ("clang_Type_getNumTemplateArguments", [Type], c_int),
     (
-        "clang_Cursor_getOffsetOfField",
-        [Cursor],
-        c_longlong
-    ),
-    (
-        "clang_Type_getAlignOf",
-        [Type],
-        c_longlong
-    ),
-    (
-        "clang_Type_getClassType",
-        [Type],
+        "clang_Type_getTemplateArgumentAsType",
+        [Type, c_uint],
         Type,
-        Type.from_result
+        Type.from_result,
     ),
-    (
-        "clang_Type_getOffsetOf",
-        [Type, c_char_p],
-        c_longlong
-    ),
-    (
-        "clang_Type_getSizeOf",
-        [Type],
-        c_longlong
-    ),
-    (
-        "clang_Type_getCXXRefQualifier",
-        [Type],
-        c_uint
-    ),
+    ("clang_Type_getOffsetOf", [Type, c_interop_string], c_longlong),
+    ("clang_Type_getSizeOf", [Type], c_longlong),
+    ("clang_Type_getCXXRefQualifier", [Type], c_uint),
+    ("clang_Type_getNamedType", [Type], Type, Type.from_result),
     (
         "clang_Type_visitFields",
-        [Type, callbacks['fields_visit'], py_object],
-        c_uint
+        [Type, callbacks["fields_visit"], py_object],
+        c_uint,
     ),
 ]
 
@@ -3901,8 +3841,10 @@ def register_function(lib, item, ignore_errors):
     try:
         func = getattr(lib, item[0])
     except AttributeError as e:
-        msg = str(e) + ". Please ensure that your python bindings are "\
-                       "compatible with your libclang.so version."
+        msg = (
+            str(e) + ". Please ensure that your python bindings are "
+            "compatible with your libclang.so version."
+        )
         if ignore_errors:
             return
         raise LibclangError(msg)
@@ -3945,8 +3887,10 @@ class Config:
     def set_library_path(path):
         """Set the path in which to search for libclang"""
         if Config.loaded:
-            raise Exception("library path must be set before before using "
-                            "any other functionalities in libclang.")
+            raise Exception(
+                "library path must be set before before using "
+                "any other functionalities in libclang."
+            )
 
         Config.library_path = path
 
@@ -3954,8 +3898,10 @@ class Config:
     def set_library_file(filename):
         """Set the exact location of libclang"""
         if Config.loaded:
-            raise Exception("library file must be set before before using "
-                            "any other functionalities in libclang.")
+            raise Exception(
+                "library file must be set before before using "
+                "any other functionalities in libclang."
+            )
 
         Config.library_file = filename
 
@@ -3978,41 +3924,45 @@ class Config:
         libclang versions.
         """
         if Config.loaded:
-            raise Exception("compatibility_check must be set before before "
-                            "using any other functionalities in libclang.")
+            raise Exception(
+                "compatibility_check must be set before before "
+                "using any other functionalities in libclang."
+            )
 
         Config.compatibility_check = check_status
 
     @CachedProperty
     def lib(self):
-        clang_lib = self.get_cindex_library()
-        register_functions(clang_lib, not Config.compatibility_check)
+        lib = self.get_cindex_library()
+        register_functions(lib, not Config.compatibility_check)
         Config.loaded = True
-        return clang_lib
+        return lib
 
     @CachedProperty
     def sealang(self):
         import sealang
-        sealang_lib = cdll.LoadLibrary(sealang.__file__)
-        register_functions(sealang_lib, not Config.compatibility_check)
-        return sealang_lib
+
+        lib = cdll.LoadLibrary(sealang.__file__)
+        register_functions(lib, not Config.compatibility_check)
+        return lib
 
     def get_filename(self):
         if Config.library_file:
             return Config.library_file
 
         import platform
+
         name = platform.system()
 
-        if name == 'Darwin':
-            file = 'libclang.dylib'
-        elif name == 'Windows':
-            file = 'libclang.dll'
+        if name == "Darwin":
+            file = "libclang.dylib"
+        elif name == "Windows":
+            file = "libclang.dll"
         else:
-            file = 'libclang.so'
+            file = "libclang.so"
 
         if Config.library_path:
-            file = Config.library_path + '/' + file
+            file = Config.library_path + "/" + file
 
         return file
 
@@ -4020,9 +3970,11 @@ class Config:
         try:
             library = cdll.LoadLibrary(self.get_filename())
         except OSError as e:
-            msg = str(e) + ". To provide a path to libclang use " \
-                           "Config.set_library_path() or " \
-                           "Config.set_library_file()."
+            msg = (
+                str(e) + ". To provide a path to libclang use "
+                "Config.set_library_path() or "
+                "Config.set_library_file()."
+            )
             raise LibclangError(msg)
 
         return library
@@ -4040,30 +3992,34 @@ def register_enumerations():
     for name, value in clang.enumerations.TokenKinds:
         TokenKind.register(value, name)
 
+
 conf = Config()
 register_enumerations()
 
 __all__ = [
-    'BinaryOperator',
-    'CodeCompletionResults',
-    'CompilationDatabase',
-    'CompileCommand',
-    'CompileCommands',
-    'Config',
-    'Cursor',
-    'CursorKind',
-    'Diagnostic',
-    'File',
-    'FixIt',
-    'Index',
-    'SourceLocation',
-    'SourceRange',
-    'StorageClass',
-    'Token',
-    'TokenKind',
-    'TranslationUnit',
-    'TranslationUnitLoadError',
-    'Type',
-    'TypeKind',
-    'UnaryOperator',
+    "AvailabilityKind",
+    "BinaryOperator",
+    "CodeCompletionResults",
+    "CompilationDatabase",
+    "CompileCommand",
+    "CompileCommands",
+    "Config",
+    "Cursor",
+    "CursorKind",
+    "Diagnostic",
+    "File",
+    "FixIt",
+    "Index",
+    "LinkageKind",
+    "SourceLocation",
+    "SourceRange",
+    "StorageClass",
+    "TLSKind",
+    "Token",
+    "TokenKind",
+    "TranslationUnit",
+    "TranslationUnitLoadError",
+    "Type",
+    "TypeKind",
+    "UnaryOperator",
 ]

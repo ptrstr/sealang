@@ -1,51 +1,49 @@
-from __future__ import unicode_literals
+import os
+from clang.cindex import Config
+if 'CLANG_LIBRARY_PATH' in os.environ:
+    Config.set_library_path(os.environ['CLANG_LIBRARY_PATH'])
 
 from clang.cindex import TokenKind
-from nose.tools import eq_
-from nose.tools import ok_
-from nose.tools import raises
+
+import unittest
 
 
-def test_constructor():
-    """Ensure TokenKind constructor works as expected."""
+class TestTokenKind(unittest.TestCase):
+    def test_constructor(self):
+        """Ensure TokenKind constructor works as expected."""
 
-    t = TokenKind(5, 'foo')
+        t = TokenKind(5, 'foo')
 
-    eq_(t.value, 5)
-    eq_(t.name, 'foo')
+        self.assertEqual(t.value, 5)
+        self.assertEqual(t.name, 'foo')
 
+    def test_bad_register(self):
+        """Ensure a duplicate value is rejected for registration."""
 
-@raises(ValueError)
-def test_bad_register():
-    """Ensure a duplicate value is rejected for registration."""
+        with self.assertRaises(ValueError):
+            TokenKind.register(2, 'foo')
 
-    TokenKind.register(2, 'foo')
+    def test_unknown_value(self):
+        """Ensure trying to fetch an unknown value raises."""
 
+        with self.assertRaises(ValueError):
+            TokenKind.from_value(-1)
 
-@raises(ValueError)
-def test_unknown_value():
-    """Ensure trying to fetch an unknown value raises."""
+    def test_registration(self):
+        """Ensure that items registered appear as class attributes."""
+        self.assertTrue(hasattr(TokenKind, 'LITERAL'))
+        literal = TokenKind.LITERAL
 
-    TokenKind.from_value(-1)
+        self.assertIsInstance(literal, TokenKind)
 
+    def test_from_value(self):
+        """Ensure registered values can be obtained from from_value()."""
+        t = TokenKind.from_value(3)
+        self.assertIsInstance(t, TokenKind)
+        self.assertEqual(t, TokenKind.LITERAL)
 
-def test_registration():
-    """Ensure that items registered appear as class attributes."""
-    ok_(hasattr(TokenKind, 'LITERAL'))
-    literal = TokenKind.LITERAL
+    def test_repr(self):
+        """Ensure repr() works."""
 
-    ok_(isinstance(literal, TokenKind))
-
-
-def test_from_value():
-    """Ensure registered values can be obtained from from_value()."""
-    t = TokenKind.from_value(3)
-    ok_(isinstance(t, TokenKind))
-    eq_(t, TokenKind.LITERAL)
-
-
-def test_repr():
-    """Ensure repr() works."""
-
-    r = repr(TokenKind.LITERAL)
-    eq_(r, 'TokenKind.LITERAL')
+        r = repr(TokenKind.LITERAL)
+        self.assertEqual(r, 'TokenKind.LITERAL')

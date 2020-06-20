@@ -1,9 +1,10 @@
 # This file provides common utility functions for the test suite.
-from __future__ import unicode_literals
+
+import os
+import unittest
 
 from clang.cindex import Cursor
 from clang.cindex import TranslationUnit
-
 
 def get_tu(source, lang='c', all_warnings=False, flags=[]):
     """Obtain a translation unit from source and language.
@@ -32,7 +33,6 @@ def get_tu(source, lang='c', all_warnings=False, flags=[]):
     return TranslationUnit.from_source(name, args, unsaved_files=[(name,
                                        source)])
 
-
 def get_cursor(source, spelling):
     """Obtain a cursor from a source object.
 
@@ -50,7 +50,6 @@ def get_cursor(source, spelling):
             return cursor
 
     return None
-
 
 def get_cursors(source, spelling):
     """Obtain all cursors from a source object with a specific spelling.
@@ -70,7 +69,6 @@ def get_cursors(source, spelling):
             cursors.append(cursor)
 
     return cursors
-
 
 __all__ = [
     'get_cursor',
