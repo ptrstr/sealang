@@ -12,6 +12,7 @@ import os
 import subprocess
 
 from setuptools import setup, Extension
+from distutils import sysconfig
 from pathlib import Path
 
 llvm_home = os.environ.get("LLVM_HOME", "/usr")
@@ -19,7 +20,6 @@ llvm_home = os.environ.get("LLVM_HOME", "/usr")
 
 def iter_llvm_config():
     paths = (
-        Path(llvm_home, "bin", "llvm-config-10"),
         Path(llvm_home, "bin", "llvm-config"),
         Path("/usr/bin/llvm-config-10"),
         Path("/usr/bin/llvm-config"),
@@ -41,6 +41,11 @@ if llvm_config is None:
 llvm_cflags = (
     subprocess.check_output([str(llvm_config), "--cxxflags"]).decode("utf-8").split()
 )
+
+# Disable debug symbols in extension (reduce .so size)
+cflags = sysconfig.get_config_var("CFLAGS")
+sysconfig._config_vars["CFLAGS"] = cflags.replace(" -g ", " ")
+
 llvm_ldflags = (
     subprocess.check_output([str(llvm_config), "--ldflags"]).decode("utf-8").split()
 )
