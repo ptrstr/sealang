@@ -15,12 +15,14 @@ from setuptools import setup, Extension
 from distutils import sysconfig
 from pathlib import Path
 
+extension = ".exe" if sys.platform == "win32" else ""
+
 llvm_home = os.environ.get("LLVM_HOME", "/usr")
 
 
 def iter_llvm_config():
     paths = (
-        Path(llvm_home, "bin", "llvm-config"),
+        Path(llvm_home, "bin", "llvm-config" + extension),
         Path("/usr/bin/llvm-config-10"),
         Path("/usr/bin/llvm-config"),
     )
@@ -42,9 +44,10 @@ llvm_cflags = (
     subprocess.check_output([str(llvm_config), "--cxxflags"]).decode("utf-8").split()
 )
 
-# Disable debug symbols in extension (reduce .so size)
-cflags = sysconfig.get_config_var("CFLAGS")
-sysconfig._config_vars["CFLAGS"] = cflags.replace(" -g ", " ")
+if sys.platform != "win32":
+    # Disable debug symbols in extension (reduce .so size)
+    cflags = sysconfig.get_config_var("CFLAGS")
+    sysconfig._config_vars["CFLAGS"] = cflags.replace(" -g ", " ")
 
 llvm_ldflags = (
     subprocess.check_output([str(llvm_config), "--ldflags"]).decode("utf-8").split()
@@ -74,7 +77,7 @@ setup(
         Extension(
             "sealang",
             sources=["sealang/sealang.cpp"],
-            libraries=["clang-cpp"],
+            libraries=["clangAST", "clangBasic", "clangLex", "LLVMBinaryFormat", "LLVMBitstreamReader", "LLVMCore", "LLVMFrontendOpenMP", "LLVMRemarks", "LLVMSupport"],
             extra_compile_args=llvm_cflags,
             extra_link_args=llvm_ldflags,
         ),
