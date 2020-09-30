@@ -14,9 +14,11 @@ To compile Sealang, you'll need to:
 
 1. Make sure you have Python >= 3.7
 2. Install LLVM 10.0 (with clang)
-3. Set some environment variables
+    Note about Windows: You might need to compile the project. Follow the steps here_ to compile it (You must enable the ``clang`` project)
+3. Set the environment variable ``LLVM_HOME`` to the root of the compiled LLVM project
 4. pip install git+https://github.com/gtors/sealang#egg=sealang-10.0
 
+.. _here: https://github.com/llvm/llvm-project
 
 Usage
 -----
