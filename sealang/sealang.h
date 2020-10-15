@@ -41,25 +41,25 @@ EXPORT_PREFIX CXString clang_Cursor_getLiteralString(CXCursor cursor);
  * \brief Returns for-loop init cursor [for(init;cond;inc)], or CXCursor_NoDeclFound if there is no decl,
  * or CXCursor_InvalidCode if C is not CXCursor_ForStmt
  */
-// EXPORT_PREFIX CXCursor clang_getForStmtInit(CXCursor C);
+EXPORT_PREFIX CXCursor clang_getForStmtInit(CXCursor C);
 
 /**
  * \brief Returns for-loop condition cursor [for(init;cond;inc)], or CXCursor_NoDeclFound if there is no decl,
  * or CXCursor_InvalidCode if C is not CXCursor_ForStmt
  */
-// EXPORT_PREFIX CXCursor clang_getForStmtCond(CXCursor C);
+EXPORT_PREFIX CXCursor clang_getForStmtCond(CXCursor C);
 
 /**
  * \brief Returns for-loop increment cursor [for(init;cond;inc)], or CXCursor_NoDeclFound if there is no decl,
  * or CXCursor_InvalidCode if C is not CXCursor_ForStmt
  */
-// EXPORT_PREFIXCXCursor clang_getForStmtInc(CXCursor C);
+EXPORT_PREFIX CXCursor clang_getForStmtInc(CXCursor C);
 
 /**
  * \brief Returns for-loop body, or CXCursor_NoDeclFound if there is no decl,
  * or CXCursor_InvalidCode if C is not CXCursor_ForStmt
  */
-// EXPORT_PREFIX CXCursor clang_getForStmtBody(CXCursor C);
+EXPORT_PREFIX CXCursor clang_getForStmtBody(CXCursor C);
 
 
 #ifdef __cplusplus

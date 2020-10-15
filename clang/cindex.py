@@ -1584,6 +1584,54 @@ class Cursor(Structure):
         return self._literal
 
     @property
+    def for_init(self):
+        """
+        Retrieves the for loop initializer at this cursor
+        """
+        if not hasattr(self, "_for_init"):
+            self._for_init = conf.sealang.clang_getForStmtInit(
+                self
+            )
+            self._for_init._tu = self._tu
+        return self._for_init
+
+    @property
+    def for_cond(self):
+        """
+        Retrieves the for loop condition at this cursor
+        """
+        if not hasattr(self, "_for_cond"):
+            self._for_cond = conf.sealang.clang_getForStmtCond(
+                self
+            )
+            self._for_cond._tu = self._tu
+        return self._for_cond
+
+    @property
+    def for_inc(self):
+        """
+        Retrieves the for loop increment at this cursor
+        """
+        if not hasattr(self, "_for_inc"):
+            self._for_inc = conf.sealang.clang_getForStmtInc(
+                self
+            )
+            self._for_inc._tu = self._tu
+        return self._for_inc
+
+    @property
+    def for_body(self):
+        """
+        Retrieves the for loop body at this cursor
+        """
+        if not hasattr(self, "_for_body"):
+            self._for_body = conf.sealang.clang_getForStmtBody(
+                self
+            )
+            self._for_body._tu = self._tu
+        return self._for_body
+
+    @property
     def operator(self):
         """Retrieve the spelling of this TypeKind."""
         if not hasattr(self, "_operator"):
@@ -3650,6 +3698,10 @@ functionList = [
     ("clang_getFile", [TranslationUnit, c_interop_string], c_object_p),
     ("clang_getFileName", [File], _CXString, _CXString.from_result),
     ("clang_getFileTime", [File], c_uint),
+    ("clang_getForStmtInit", [Cursor], Cursor, Cursor.from_result),
+    ("clang_getForStmtCond", [Cursor], Cursor, Cursor.from_result),
+    ("clang_getForStmtInc", [Cursor], Cursor, Cursor.from_result),
+    ("clang_getForStmtBody", [Cursor], Cursor, Cursor.from_result),
     ("clang_getIBOutletCollectionType", [Cursor], Type, Type.from_result),
     ("clang_getIncludedFile", [Cursor], c_object_p, File.from_result),
     (

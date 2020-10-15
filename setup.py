@@ -77,7 +77,7 @@ setup(
         Extension(
             "sealang",
             sources=["sealang/sealang.cpp"],
-            libraries=["clangAST", "clangBasic", "clangLex", "LLVMBinaryFormat", "LLVMBitstreamReader", "LLVMCore", "LLVMFrontendOpenMP", "LLVMRemarks", "LLVMSupport"],
+            libraries=["clangAST", "clangBasic", "clangLex", "libclang", "LLVMBinaryFormat", "LLVMBitstreamReader", "LLVMCore", "LLVMFrontendOpenMP", "LLVMRemarks", "LLVMSupport"],
             extra_compile_args=llvm_cflags,
             extra_link_args=llvm_ldflags,
         ),
