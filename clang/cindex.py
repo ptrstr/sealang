@@ -1593,6 +1593,11 @@ class Cursor(Structure):
                 self
             )
             self._for_init._tu = self._tu
+
+            for child in self.get_children():
+                if self._for_init.extent == child.extent:
+                    self._for_init = child
+                    break
         return self._for_init
 
     @property
@@ -1605,6 +1610,11 @@ class Cursor(Structure):
                 self
             )
             self._for_cond._tu = self._tu
+
+            for child in self.get_children():
+                if self._for_cond.extent == child.extent:
+                    self._for_cond = child
+                    break
         return self._for_cond
 
     @property
@@ -1617,6 +1627,11 @@ class Cursor(Structure):
                 self
             )
             self._for_inc._tu = self._tu
+
+            for child in self.get_children():
+                if self._for_inc.extent == child.extent:
+                    self._for_inc = child
+                    break
         return self._for_inc
 
     @property
@@ -1629,6 +1644,11 @@ class Cursor(Structure):
                 self
             )
             self._for_body._tu = self._tu
+
+            for child in self.get_children():
+                if self._for_body.extent == child.extent:
+                    self._for_body = child
+                    break
         return self._for_body
 
     @property
@@ -3698,10 +3718,10 @@ functionList = [
     ("clang_getFile", [TranslationUnit, c_interop_string], c_object_p),
     ("clang_getFileName", [File], _CXString, _CXString.from_result),
     ("clang_getFileTime", [File], c_uint),
-    ("clang_getForStmtInit", [Cursor], Cursor, Cursor.from_result),
-    ("clang_getForStmtCond", [Cursor], Cursor, Cursor.from_result),
-    ("clang_getForStmtInc", [Cursor], Cursor, Cursor.from_result),
-    ("clang_getForStmtBody", [Cursor], Cursor, Cursor.from_result),
+    ("clang_getForStmtInit", [Cursor], Cursor),
+    ("clang_getForStmtCond", [Cursor], Cursor),
+    ("clang_getForStmtInc", [Cursor], Cursor),
+    ("clang_getForStmtBody", [Cursor], Cursor),
     ("clang_getIBOutletCollectionType", [Cursor], Type, Type.from_result),
     ("clang_getIncludedFile", [Cursor], c_object_p, File.from_result),
     (
