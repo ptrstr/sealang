@@ -622,7 +622,6 @@ class TestCursor(unittest.TestCase):
         t = foo.result_type
         self.assertEqual(t.kind, TypeKind.INT)
 
-    @unittest.skip("FIXME: For some reason, result_type.kind is TypeKind.INVALID")
     def test_result_type_objc_method_decl(self):
         code = """
         @interface Interface : NSObject

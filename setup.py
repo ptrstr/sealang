@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import sys
+import ctypes.util
 
 major, minor = sys.version_info[:2]
 if major < 3 or minor < 7:
@@ -53,9 +54,14 @@ llvm_ldflags = (
     subprocess.check_output([str(llvm_config), "--ldflags"]).decode("utf-8").split()
 )
 
+if ctypes.util.find_library('clang-cpp'):
+    libraries = ['clang-cpp']
+else:
+    libraries=["clangAST", "clangBasic", "clangLex", "LLVMBinaryFormat", "LLVMBitstreamReader", "LLVMCore", "LLVMFrontendOpenMP", "LLVMRemarks", "LLVMSupport"],
+
 setup(
     name="sealang",
-    version="10.0",
+    version="11.0",
     description="An extended set of Python bindings for libclang (fork of pybee/sealang)",
     long_description=open("README.rst").read(),
     url="http://github.com/gtors/sealang",
@@ -77,7 +83,7 @@ setup(
         Extension(
             "sealang",
             sources=["sealang/sealang.cpp"],
-            libraries=["clangAST", "clangBasic", "clangLex", "LLVMBinaryFormat", "LLVMBitstreamReader", "LLVMCore", "LLVMFrontendOpenMP", "LLVMRemarks", "LLVMSupport"],
+            libraries=libraries,
             extra_compile_args=llvm_cflags,
             extra_link_args=llvm_ldflags,
         ),
