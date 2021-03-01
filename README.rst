@@ -13,10 +13,10 @@ Installation
 To compile Sealang, you'll need to:
 
 1. Make sure you have Python >= 3.7
-2. Install LLVM 10.0 (with clang)
+2. Install LLVM 11.0 (with clang)
     Note about Windows: You might need to compile the project. Follow the steps here_ to compile it (You must enable the ``clang`` project)
 3. Set the environment variable ``LLVM_HOME`` to the root of the compiled LLVM project
-4. pip install git+https://github.com/gtors/sealang#egg=sealang-10.0
+4. pip install git+https://github.com/gtors/sealang#egg=sealang-11.0
 
 .. _here: https://github.com/llvm/llvm-project
 
@@ -116,7 +116,7 @@ Relationship to Clang
 ~~~~~~~~~~~~~~~~~~~~~
 
 This project aims to mirror what is currently available in the Python bindings
-to ``libclang``. The version number for this project is drawn from the version 
+to ``libclang``. The version number for this project is drawn from the version
 of the official clang repository.
 
 Any changes made upstream to ``libclang`` will be mirrored here.
