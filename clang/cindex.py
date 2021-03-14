@@ -90,6 +90,10 @@ class c_interop_string(c_char_p):
             return None
         return super().value.decode("utf8")
 
+    @property
+    def raw_value(self):
+        return super().value
+
     @classmethod
     def from_param(cls, param):
         if isinstance(param, str):
@@ -104,6 +108,10 @@ class c_interop_string(c_char_p):
     @staticmethod
     def to_python_string(x, *args):
         return x.value
+
+    @staticmethod
+    def to_python_bytes(x, *args):
+        return x.raw_value
 
 
 ### Exception Classes ###
@@ -193,7 +201,12 @@ class _CXString(Structure):
     @staticmethod
     def from_result(res, fn=None, args=None):
         assert isinstance(res, _CXString)
-        return conf.lib.clang_getCString(res)
+        return conf.lib.clang_getCString(res).value
+
+    @staticmethod
+    def from_result_raw(res, fn=None, args=None):
+        assert isinstance(res, _CXString)
+        return conf.lib.clang_getCString(res).raw_value
 
 
 class SourceLocation(Structure):
@@ -3619,7 +3632,7 @@ functionList = [
         _CXString.from_result,
     ),
     ("clang_getCompletionPriority", [c_void_p], c_int),
-    ("clang_getCString", [_CXString], c_interop_string, c_interop_string.to_python_string),
+    ("clang_getCString", [_CXString], c_interop_string),
     ("clang_getCursor", [TranslationUnit, SourceLocation], Cursor),
     ("clang_getCursorAvailability", [Cursor], c_int),
     ("clang_getCursorDefinition", [Cursor], Cursor, Cursor.from_result),
@@ -3653,7 +3666,7 @@ functionList = [
         "clang_Cursor_getLiteralString",
         [Cursor],
         _CXString,
-        _CXString.from_result
+        _CXString.from_result_raw
     ),
     (
         "clang_Cursor_getOperatorString",
